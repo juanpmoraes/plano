@@ -19,7 +19,7 @@ DB_CONFIG = {
     'host': 'square-cloud-db-45ee9918389d44b3937fdb8e41f83048.squareweb.app',  # Substituir pelo host do Square Cloud
     'user': 'squarecloud',
     'password': 'INNbhFE8vqhXzKTHUHLhLFWk',
-    'database': 'auth_2fa_db',
+    'database': 'sistema_assinaturas',
     'port': 7102
 }
 
