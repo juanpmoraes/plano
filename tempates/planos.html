@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planos - MeuSistema</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <h1>🚀 MeuSistema</h1>
+            <div class="nav-right">
+                <a href="/dashboard" class="btn-secondary">Dashboard</a>
+                <a href="/logout" class="btn-secondary">Sair</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="planos-container">
+        <h2>Escolha seu Plano</h2>
+        <p class="subtitle">Selecione o melhor plano para suas necessidades</p>
+
+        <div class="planos-grid">
+            {% for key, plano in planos.items() %}
+            <div class="plano-card {% if key == 'pro' %}featured{% endif %}">
+                {% if key == 'pro' %}
+                <div class="badge-popular">Mais Popular</div>
+                {% endif %}
+
+                <h3>{{ plano.nome }}</h3>
+                <div class="preco">
+                    {% if plano.preco == 0 %}
+                    <span class="valor">Grátis</span>
+                    {% else %}
+                    <span class="cifrao">R$</span>
+                    <span class="valor">{{ "%.2f"|format(plano.preco) }}</span>
+                    <span class="periodo">/mês</span>
+                    {% endif %}
+                </div>
+
+                <ul class="recursos">
+                    {% for recurso in plano.recursos %}
+                    <li>✓ {{ recurso }}</li>
+                    {% endfor %}
+                </ul>
+
+                <button class="btn-plano" onclick="selecionarPlano('{{ key }}')">
+                    {% if key == 'free' %}
+                    Começar Grátis
+                    {% else %}
+                    Assinar Agora
+                    {% endif %}
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Modal de Pagamento PIX -->
+    <div id="pix-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="fecharModal()">&times;</span>
+            <h3>Pagamento via PIX</h3>
+            <div id="pix-info">
+                <p>Escaneie o QR Code abaixo para realizar o pagamento:</p>
+                <div class="qr-container">
+                    <img id="qr-code-img" src="" alt="QR Code PIX">
+                </div>
+                <p class="valor-pix">Valor: R$ <span id="valor-pagamento">0.00</span></p>
+                <p class="info-text">Ou copie o código PIX:</p>
+                <div class="pix-code">
+                    <input type="text" id="pix-code-text" readonly>
+                    <button onclick="copiarPix()">Copiar</button>
+                </div>
+                <p class="expiracao">⏱️ Este código expira em 1 hora</p>
+                <div class="status-pagamento">
+                    <div class="loader"></div>
+                    <p>Aguardando pagamento...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/planos.js') }}"></script>
+</body>
+</html>
