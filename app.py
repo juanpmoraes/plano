@@ -89,8 +89,8 @@ def gerar_pix_qrcode(valor, usuario_id, plano):
 
     # Dados do PIX (em produção, usar API do banco)
     # Formato EMV simplificado para demonstração
-    chave_pix = "sua-chave-pix@banco.com"  # Substituir pela sua chave PIX
-    merchant_name = "Seu Negócio"
+    chave_pix = "juanpmoraes2@gmail.com"  # Substituir pela sua chave PIX
+    merchant_name = "JPBOT"
     merchant_city = "Sao Paulo"
 
     # Payload PIX (simplificado - em produção usar biblioteca específica)
