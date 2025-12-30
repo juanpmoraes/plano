@@ -36,7 +36,7 @@ MERCADO_PAGO_PUBLIC_KEY = "APP_USR-cd6283c6-f89b-4f57-94d3-a9d68b174a8a"
 # Planos disponíveis
 PLANOS = {
     'free': {'nome': 'Gratuito', 'preco': 0.00, 'recursos': ['Recurso básico', '5 projetos', 'Suporte por email']},
-    'pro': {'nome': 'Pro', 'preco': 1.50, 'recursos': ['Todos recursos básicos', '50 projetos', 'Suporte prioritário', 'API Access']},
+    'pro': {'nome': 'Pro', 'preco': 1.00, 'recursos': ['Todos recursos básicos', '50 projetos', 'Suporte prioritário', 'API Access']},
     'premium': {'nome': 'Premium', 'preco': 79.90, 'recursos': ['Recursos ilimitados', 'Projetos ilimitados', 'Suporte 24/7', 'API Access', 'Relatórios avançados']}
 }
 
