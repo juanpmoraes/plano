@@ -55,7 +55,7 @@ PLANOS = {
     },
     'pro': {
         'nome': 'Pro',
-        'preco': 1.00,
+        'preco': 19.99,
         'recursos': [
             'Todos recursos básicos',
             '50 projetos',
@@ -74,7 +74,7 @@ PLANOS = {
     },
     'premium': {
         'nome': 'Premium',
-        'preco': 79.90,
+        'preco': 0.10,
         'recursos': [
             'Recursos ilimitados',
             'Projetos ilimitados',
