@@ -498,8 +498,15 @@ def user_info():
     })
 
 if __name__ == '__main__':
+    import os
+
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "80"))
+
     print("🚀 Iniciando Sistema de Assinaturas com PIX REAL...")
-    print("💳 Mercado Pago TESTE configurado!")
     init_database()
-    print("🌐 Servidor Flask + PIX REAL em http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    print(f"🌐 Servidor Flask em http://{host}:{port}")
+
+    # Em produção, debug precisa ser False
+    app.run(debug=False, host=host, port=port)
+
