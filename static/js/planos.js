@@ -136,3 +136,21 @@ async function confirmarCompra() {
 
   abrirPixModal(data.qr_code, data.qr_string);
 }
+
+
+function iniciarVerificacaoPix(pixId) {
+  const interval = setInterval(async () => {
+    try {
+      const r = await fetch(`/verificar_pagamento/${pixId}`);
+      const j = await r.json();
+
+      if (j.success && j.status === "confirmado") {
+        clearInterval(interval);
+        alert("✅ Pagamento confirmado! Plano ativado.");
+        window.location.href = "/dashboard";
+      }
+    } catch (e) {
+      // ignora falhas temporárias
+    }
+  }, 4000);
+}

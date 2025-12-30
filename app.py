@@ -11,7 +11,7 @@ import uuid
 import mercadopago  # ✅ PIX REAL
 import qrcode  # ✅ Para QR Code
 import os
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "jpbot.squareweb.app/webhook")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://jpbot.squareweb.app/webhook")
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
@@ -36,7 +36,7 @@ MERCADO_PAGO_PUBLIC_KEY = "APP_USR-cd6283c6-f89b-4f57-94d3-a9d68b174a8a"
 # Planos disponíveis
 PLANOS = {
     'free': {'nome': 'Gratuito', 'preco': 0.00, 'recursos': ['Recurso básico', '5 projetos', 'Suporte por email']},
-    'pro': {'nome': 'Pro', 'preco': 29.90, 'recursos': ['Todos recursos básicos', '50 projetos', 'Suporte prioritário', 'API Access']},
+    'pro': {'nome': 'Pro', 'preco': 1.00, 'recursos': ['Todos recursos básicos', '50 projetos', 'Suporte prioritário', 'API Access']},
     'premium': {'nome': 'Premium', 'preco': 79.90, 'recursos': ['Recursos ilimitados', 'Projetos ilimitados', 'Suporte 24/7', 'API Access', 'Relatórios avançados']}
 }
 
@@ -196,20 +196,15 @@ def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
             "payment_method_id": "pix",
             "description": f"Assinatura JPBOT - {PLANOS[plano]['nome']}",
             "external_reference": f"{session['user_id']}_{plano}_{int(datetime.now().timestamp())}",
-
-            # ✅ AQUI (mesmo nível de transaction_amount/payer)
-            "notification_url": WEBHOOK_URL,
-
+            "notification_url": WEBHOOK_URL,  # ✅ agora é URL válida
             "payer": {
                 "email": session.get("user_email", "cliente@exemplo.com"),
                 "first_name": session.get("user_name", "Cliente"),
                 "last_name": "JPBOT",
-                "identification": {
-                    "type": "CPF",
-                    "number": cpf_digits
-                }
+                "identification": {"type": "CPF", "number": cpf_digits}
             }
         }
+
 
         # Debug durante testes
         print("➡️ payment_data =", payment_data)
@@ -347,22 +342,35 @@ def register():
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    
+
+    # ✅ Sincroniza o plano da sessão com o banco (caso tenha mudado via webhook)
+    conn = get_db_connection('sistema_assinaturas')
+    if conn:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT plano FROM usuarios WHERE id = %s", (session['user_id'],))
+        row = cursor.fetchone()
+        if row and row.get('plano'):
+            session['user_plano'] = row['plano']
+        cursor.close()
+        conn.close()
+
+    # Stats (mantido)
     conn = get_db_connection('sistema_assinaturas')
     stats = {
         'projetos': 0,
         'armazenamento': '0 MB',
         'api_calls': 0
     }
-    
+
     if conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM usuarios WHERE ativo = TRUE")
         stats['total_usuarios'] = cursor.fetchone()[0]
         cursor.close()
         conn.close()
-    
+
     return render_template('dashboard.html', stats=stats)
+
 
 @app.route('/planos')
 def planos():
@@ -426,59 +434,122 @@ def criar_pagamento():
 @app.route('/verificar_pagamento/<pix_id>', methods=['GET'])
 def verificar_pagamento(pix_id):
     if 'user_id' not in session:
-        return jsonify({'success': False, 'message': 'Usuário não autenticado'})
-    
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+
     conn = get_db_connection('sistema_assinaturas')
-    if conn:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM pagamentos WHERE pix_id = %s AND usuario_id = %s", (pix_id, session['user_id']))
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT * FROM pagamentos WHERE pix_id = %s AND usuario_id = %s",
+            (pix_id, session['user_id'])
+        )
         pagamento = cursor.fetchone()
-        
-        if pagamento and pagamento['status'] == 'confirmado':
-            cursor.execute("UPDATE usuarios SET plano = %s WHERE id = %s", (pagamento['plano'], session['user_id']))
+
+        if not pagamento:
+            return jsonify({'success': False, 'message': 'Pagamento não encontrado'}), 404
+
+        # Já confirmado no seu banco
+        if pagamento.get('status') == 'confirmado':
+            cursor.execute(
+                "UPDATE usuarios SET plano = %s WHERE id = %s",
+                (pagamento['plano'], session['user_id'])
+            )
             conn.commit()
             session['user_plano'] = pagamento['plano']
-            cursor.close()
-            conn.close()
             return jsonify({'success': True, 'status': 'confirmado', 'plano': pagamento['plano']})
-        
+
+        # Se está pendente, consulta o Mercado Pago
+        mp_payment_id = pagamento.get('mp_payment_id')
+        if not mp_payment_id:
+            return jsonify({'success': True, 'status': 'pendente'})
+
+        sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
+        mp_resp = sdk.payment().find_by_id(mp_payment_id)
+        mp_payment = mp_resp.get('response', {})
+        mp_status = mp_payment.get('status')
+
+        # approved = pago/confirmado
+        if mp_status == 'approved':
+            cursor.execute(
+                "UPDATE pagamentos SET status = 'confirmado' WHERE pix_id = %s AND usuario_id = %s",
+                (pix_id, session['user_id'])
+            )
+            cursor.execute(
+                "UPDATE usuarios SET plano = %s WHERE id = %s",
+                (pagamento['plano'], session['user_id'])
+            )
+            conn.commit()
+            session['user_plano'] = pagamento['plano']
+            return jsonify({'success': True, 'status': 'confirmado', 'plano': pagamento['plano']})
+
+        # Se ainda não aprovou, segue pendente (você pode retornar mp_status para debug)
+        return jsonify({'success': True, 'status': 'pendente', 'mp_status': mp_status})
+
+    finally:
         cursor.close()
         conn.close()
-    
-    return jsonify({'success': True, 'status': 'pendente'})
 
-@app.route('/webhook', methods=['POST'])
+
+@app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """✅ Webhook Mercado Pago - atualiza status automaticamente"""
+    """✅ Webhook/IPN Mercado Pago - atualiza status automaticamente"""
     try:
-        data = request.get_json()
-        payment_id = data.get('data', {}).get('id')
-        
-        if payment_id:
-            sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
-            payment = sdk.payment().find_by_id(payment_id)['response']
-            
-            if payment.get('status') == 'approved':
-                conn = get_db_connection('sistema_assinaturas')
-                if conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "UPDATE pagamentos SET status = 'confirmado' WHERE mp_payment_id = %s",
-                        (payment_id,)
-                    )
-                    cursor.execute(
-                        "UPDATE usuarios u JOIN pagamentos p ON u.id = p.usuario_id SET u.plano = p.plano WHERE p.mp_payment_id = %s",
-                        (payment_id,)
-                    )
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                    print(f"✅ Pagamento {payment_id} aprovado automaticamente!")
-        
-        return jsonify({'status': 'ok'})
+        payload = request.get_json(silent=True) or {}
+
+        # 1) Tenta extrair do JSON padrão
+        payment_id = (payload.get('data') or {}).get('id') or payload.get('id')
+
+        # 2) Fallback: IPN / query params (?topic=payment&id=123)
+        if not payment_id:
+            payment_id = request.args.get('id')
+
+        if not payment_id:
+            # Sempre responder 200/ok para o MP não ficar “martelando”
+            return jsonify({'status': 'ok', 'message': 'no payment id'}), 200
+
+        sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
+        payment = sdk.payment().find_by_id(payment_id).get('response', {})
+
+        mp_status = payment.get('status')
+        print(f"🔔 Webhook recebido payment_id={payment_id} status={mp_status}")
+
+        # approved = pago/creditado [web:247]
+        if mp_status == 'approved':
+            conn = get_db_connection('sistema_assinaturas')
+            if conn:
+                cursor = conn.cursor()
+
+                # Atualiza pagamento (cobre casos onde você salvou mp_payment_id = payment_id)
+                cursor.execute(
+                    "UPDATE pagamentos SET status='confirmado' WHERE mp_payment_id=%s OR pix_id=%s",
+                    (str(payment_id), str(payment_id))
+                )
+
+                # Atualiza plano do usuário pelo pagamento confirmado
+                cursor.execute(
+                    """UPDATE usuarios u
+                       JOIN pagamentos p ON u.id = p.usuario_id
+                       SET u.plano = p.plano
+                       WHERE p.mp_payment_id=%s OR p.pix_id=%s""",
+                    (str(payment_id), str(payment_id))
+                )
+
+                conn.commit()
+                cursor.close()
+                conn.close()
+
+                print(f"✅ Pagamento {payment_id} confirmado e plano atualizado!")
+
+        return jsonify({'status': 'ok'}), 200
+
     except Exception as e:
         print(f"Erro webhook: {e}")
-        return jsonify({'status': 'error'}), 500
+        # Mesmo em erro, vale retornar 200 para não “loopar” e você debuga via logs
+        return jsonify({'status': 'ok'}), 200
+
 
 @app.route('/logout')
 def logout():
