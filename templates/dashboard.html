@@ -5,7 +5,7 @@
   <div class="grid">
     <div class="card" style="grid-column: span 12;">
       <div class="h1">Dashboard</div>
-      <div class="muted">Gerencie seus projetos, plano e quota da API.</div>
+      <div class="muted">Gerencie seus projetos, plano, quota e API Keys.</div>
     </div>
 
     <div class="card" style="grid-column: span 4;">
@@ -48,6 +48,7 @@
       </div>
     </div>
 
+    <!-- PROJETOS -->
     <div class="card" style="grid-column: span 12;">
       <div class="row" style="justify-content:space-between;">
         <div>
@@ -80,6 +81,49 @@
       </div>
     </div>
 
+    <!-- API KEYS -->
+    <div class="card" style="grid-column: span 12;">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div class="h2">API Keys</div>
+          <div class="muted small">Crie uma key para integrar sem login (Authorization: Bearer ...).</div>
+        </div>
+        <div class="row">
+          <button class="btn" onclick="loadApiKeys()">Atualizar</button>
+          <button class="btn btn-primary" onclick="criarApiKey()">Criar API Key</button>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div id="keysMsg" class="muted small">—</div>
+      <div id="keysList" class="muted" style="margin-top:10px;">Carregando...</div>
+
+      <!-- Modal simples (mostra a key só quando cria) -->
+      <div class="card hidden" id="keyModal" style="margin-top:12px; border-color: rgba(96,165,250,.55);">
+        <div class="row" style="justify-content:space-between;">
+          <div>
+            <div class="h2">Sua nova API Key</div>
+            <div class="muted small">Copie agora. Ela não será mostrada novamente.</div>
+          </div>
+          <button class="btn btn-danger" onclick="fecharKeyModal()">Fechar</button>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="muted small">Header:</div>
+        <div class="pill mono" style="width:100%; overflow:auto;">
+          Authorization: Bearer <span id="newKeyValue"></span>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+          <button class="btn" onclick="copiarNovaKey()">Copiar</button>
+          <span class="muted small" id="copyMsg"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATUS -->
     <div class="card" style="grid-column: span 12;">
       <div class="h2">Status</div>
       <div class="row" style="gap:12px;">
@@ -112,6 +156,11 @@
     return { ok: res.ok, status: res.status, data };
   }
 
+  function escapeHtml(s){
+    return (s || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+                    .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
   function renderProjetos(payload){
     const el = document.getElementById("projetosList");
     if (!payload || !payload.success) {
@@ -125,21 +174,25 @@
     }
     el.innerHTML = projetos.map(p => {
       const d = (p.data_criacao || "").toString();
+      const nomeEsc = escapeHtml(p.nome || "");
       return `
         <div class="card" style="margin-bottom:10px;">
           <div class="row" style="justify-content:space-between;">
-            <div><b>${escapeHtml(p.nome || "")}</b></div>
-            <div class="muted small mono">#${p.id}</div>
+            <div>
+              <b>${nomeEsc}</b>
+              <div class="muted small">Criado em: ${escapeHtml(d)}</div>
+            </div>
+            <div class="right small">
+              <button class="btn small" onclick="verHistorico(${p.id})">Histórico</button>
+              <button class="btn small" onclick="renomearProjeto(${p.id})">Renomear</button>
+              <button class="btn small" onclick="duplicarProjeto(${p.id})">Duplicar</button>
+              <button class="btn btn-danger small" onclick="excluirProjeto(${p.id})">Excluir</button>
+              <div class="muted mono">#${p.id}</div>
+            </div>
           </div>
-          <div class="muted small">Criado em: ${escapeHtml(d)}</div>
         </div>
       `;
     }).join("");
-  }
-
-  function escapeHtml(s){
-    return (s || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
-                   .replaceAll('"',"&quot;").replaceAll("'","&#039;");
   }
 
   async function loadUserInfo(){
@@ -200,10 +253,190 @@
     await loadQuota();
   });
 
+  async function renomearProjeto(id){
+    const novoNome = window.prompt("Novo nome do projeto:");
+    if (!novoNome || !novoNome.trim()) return;
+
+    const msg = document.getElementById("projetoMsg");
+    msg.textContent = "Renomeando...";
+
+    const r = await fetch(`/api/projetos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ nome: novoNome.trim() })
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success){
+      msg.textContent = (data && data.message) ? data.message : ("Erro ao renomear ("+r.status+")");
+      return;
+    }
+    msg.textContent = "Projeto renomeado!";
+    await loadProjetos();
+  }
+
+  async function excluirProjeto(id){
+    if (!window.confirm("Tem certeza que deseja excluir este projeto?")) return;
+
+    const msg = document.getElementById("projetoMsg");
+    msg.textContent = "Excluindo...";
+
+    const r = await fetch(`/api/projetos/${id}`, {
+      method: "DELETE",
+      credentials: "same-origin"
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success){
+      msg.textContent = (data && data.message) ? data.message : ("Erro ao excluir ("+r.status+")");
+      return;
+    }
+    msg.textContent = "Projeto excluído.";
+    await loadProjetos();
+  }
+
+  async function duplicarProjeto(id){
+    const msg = document.getElementById("projetoMsg");
+    msg.textContent = "Duplicando...";
+
+    const r = await fetch(`/api/projetos/${id}/duplicar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin"
+    });
+
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success){
+      msg.textContent = (data && data.message) ? data.message : ("Erro ao duplicar ("+r.status+")");
+      return;
+    }
+    msg.textContent = "Projeto duplicado!";
+    await loadProjetos();
+  }
+
+  async function verHistorico(id){
+    const r = await fetch(`/api/projetos/${id}/historico`, { credentials: "same-origin" });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.success){
+      alert((data && data.message) ? data.message : "Erro ao carregar histórico");
+      return;
+    }
+
+    const lines = (data.items || []).map(x => {
+      return `${x.criado_em} | ${x.acao} | antes=${JSON.stringify(x.antes)} | depois=${JSON.stringify(x.depois)}`;
+    });
+
+    alert(lines.join("\n") || "Sem histórico ainda.");
+  }
+
+  // -------------------------
+  // API KEYS UI
+  // -------------------------
+  function fecharKeyModal(){
+    document.getElementById("keyModal").classList.add("hidden");
+    document.getElementById("newKeyValue").textContent = "";
+    document.getElementById("copyMsg").textContent = "";
+  }
+
+  async function copiarNovaKey(){
+    const key = document.getElementById("newKeyValue").textContent.trim();
+    if (!key) return;
+
+    try{
+      await navigator.clipboard.writeText(key);
+      document.getElementById("copyMsg").textContent = "Copiado!";
+    } catch(e){
+      document.getElementById("copyMsg").textContent = "Falha ao copiar (permissão do navegador).";
+    }
+    setTimeout(() => (document.getElementById("copyMsg").textContent = ""), 1400);
+  }
+
+  function renderApiKeys(items){
+    const el = document.getElementById("keysList");
+    if (!items || !items.length){
+      el.innerHTML = "<div class='muted'>Nenhuma API key ainda.</div>";
+      return;
+    }
+
+    el.innerHTML = items.map(k => {
+      const status = k.ativo
+        ? "<span class='tag ok small'>Ativa</span>"
+        : "<span class='tag bad small'>Revogada</span>";
+
+      const btn = k.ativo
+        ? `<button class="btn btn-danger small" onclick="revogarApiKey(${k.id})">Revogar</button>`
+        : `<button class="btn small" disabled>Revogada</button>`;
+
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div class="row" style="justify-content:space-between;">
+            <div>
+              <b>${escapeHtml(k.nome || "API Key")}</b>
+              <div class="muted small">Prefixo: <span class="mono">${escapeHtml(k.prefixo || "")}</span></div>
+              <div class="muted small">Criada em: ${escapeHtml((k.criado_em || "").toString())}</div>
+            </div>
+            <div class="right">
+              ${status}
+              <div style="height:8px;"></div>
+              ${btn}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  async function loadApiKeys(){
+    document.getElementById("keysMsg").textContent = "Carregando...";
+    const r = await getJSON("/api/keys");
+    if (!r.ok || !r.data.success){
+      document.getElementById("keysMsg").textContent = "Erro ao carregar API keys.";
+      document.getElementById("keysList").textContent = "";
+      return;
+    }
+    document.getElementById("keysMsg").textContent = "OK";
+    renderApiKeys(r.data.items || []);
+  }
+
+  async function criarApiKey(){
+    const nome = window.prompt("Nome da API key (ex: 'Integração Bot'):");
+    if (!nome) return;
+
+    document.getElementById("keysMsg").textContent = "Criando...";
+    const r = await postJSON("/api/keys", { nome });
+
+    if (!r.ok || !r.data.success){
+      document.getElementById("keysMsg").textContent = (r.data && r.data.message) ? r.data.message : "Erro ao criar key.";
+      return;
+    }
+
+    document.getElementById("newKeyValue").textContent = r.data.api_key || "";
+    document.getElementById("keyModal").classList.remove("hidden");
+    document.getElementById("keysMsg").textContent = "Key criada. Copie no bloco acima.";
+
+    await loadApiKeys();
+  }
+
+  async function revogarApiKey(id){
+    if (!window.confirm("Revogar esta API key?")) return;
+
+    document.getElementById("keysMsg").textContent = "Revogando...";
+    const r = await postJSON(`/api/keys/${id}/revogar`, {});
+    if (!r.ok || !r.data.success){
+      document.getElementById("keysMsg").textContent = "Erro ao revogar key.";
+      return;
+    }
+    document.getElementById("keysMsg").textContent = "Revogada.";
+    await loadApiKeys();
+  }
+
+  // init
   (async () => {
     await loadUserInfo();
     await loadQuota();
     await loadProjetos();
+    await loadApiKeys();
   })();
 </script>
 {% endblock %}

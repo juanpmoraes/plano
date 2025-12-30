@@ -12,6 +12,8 @@ import qrcode       # Para QR Code
 import os
 from functools import wraps
 from datetime import datetime, timedelta, timezone
+import json
+
 
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://jpbot.squareweb.app/webhook")
@@ -74,7 +76,7 @@ PLANOS = {
     },
     'premium': {
         'nome': 'Premium',
-        'preco': 0.10,
+        'preco': 39.99,
         'recursos': [
             'Recursos ilimitados',
             'Projetos ilimitados',
@@ -98,6 +100,17 @@ PLANOS = {
 # -------------------------
 # Helpers
 # -------------------------
+
+def log_projeto_event(conn, usuario_id: int, projeto_id: int | None, acao: str, antes=None, depois=None):
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO projeto_historico (projeto_id, usuario_id, acao, antes, depois) VALUES (%s, %s, %s, %s, %s)",
+        (projeto_id, usuario_id, acao, antes, depois)
+    )
+    cur.close()
+
+
+
 def login_required_json(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -217,6 +230,25 @@ def init_database():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # Histórico de alterações dos projetos (audit log)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS projeto_historico (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            projeto_id INT NULL,
+            usuario_id INT NOT NULL,
+            acao VARCHAR(30) NOT NULL,
+            antes JSON NULL,
+            depois JSON NULL,
+            criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_proj (projeto_id),
+            INDEX idx_user (usuario_id),
+            INDEX idx_time (criado_em),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+            FOREIGN KEY (projeto_id) REFERENCES projetos(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+
     # Projetos (para limite por plano)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS projetos (
@@ -229,6 +261,24 @@ def init_database():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS api_keys (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        usuario_id INT NOT NULL,
+        nome VARCHAR(60) NOT NULL,
+        api_key_hash CHAR(64) NOT NULL,
+        prefixo CHAR(8) NOT NULL,
+        ativo BOOLEAN DEFAULT TRUE,
+        criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        revogado_em TIMESTAMP NULL,
+        UNIQUE KEY uq_keyhash (api_key_hash),
+        INDEX idx_user (usuario_id),
+        INDEX idx_prefixo (prefixo),
+        FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+""")
+
+
     # Uso mensal API
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS api_uso_mensal (
@@ -239,6 +289,8 @@ def init_database():
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
+
+    ensure_column(cursor, "projeto_historico", "projeto_id_original", "projeto_id_original INT NULL")
 
     # Garante colunas antigas (caso já existam tabelas sem elas)
     ensure_column(cursor, "usuarios", "cpf", "cpf VARCHAR(11) NULL")
@@ -432,6 +484,131 @@ def api_access_required(count_call=True):
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def log_projeto_event(conn, usuario_id: int, projeto_id, acao: str, antes=None, depois=None):
+    def as_json(v):
+        if v is None:
+            return None
+        # mysql.connector não adapta dict->JSON sozinho, então manda como string JSON
+        return json.dumps(v, ensure_ascii=False)
+
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO projeto_historico (projeto_id, usuario_id, acao, antes, depois) VALUES (%s, %s, %s, %s, %s)",
+        (projeto_id, usuario_id, acao, as_json(antes), as_json(depois))
+    )
+    cur.close()
+
+
+def hash_api_key(raw: str) -> str:
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+def generate_api_key():
+    # chave longa (não armazenar raw no DB), e prefixo para identificar
+    raw = secrets.token_urlsafe(32)
+    prefixo = raw[:8]
+    return raw, prefixo
+
+
+def auth_required_session_or_apikey(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        # 1) sessão (dashboard)
+        if "user_id" in session:
+            return fn(*args, **kwargs)
+
+        # 2) API key via Authorization: Bearer <token>
+        auth = request.headers.get("Authorization", "")
+        parts = auth.split(" ", 1)
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            return jsonify({"success": False, "message": "Auth ausente. Use sessão ou Bearer token."}), 401
+
+        token = parts[1].strip()
+        if not token:
+            return jsonify({"success": False, "message": "Bearer token vazio."}), 401
+
+        token_hash = hash_api_key(token)
+
+        conn = get_db_connection("sistema_assinaturas")
+        if not conn:
+            return jsonify({"success": False, "message": "Erro ao conectar ao banco."}), 500
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT usuario_id FROM api_keys WHERE api_key_hash=%s AND ativo=TRUE",
+            (token_hash,)
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not row:
+            return jsonify({"success": False, "message": "API key inválida ou revogada."}), 401
+
+        # injeta user_id “virtual” para o handler
+        request.api_user_id = int(row["usuario_id"])
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/api/keys", methods=["GET"])
+@login_required_json
+def listar_keys():
+    conn = get_db_connection("sistema_assinaturas")
+    cur = conn.cursor(dictionary=True)
+    cur.execute("""SELECT id, nome, prefixo, ativo, criado_em, revogado_em
+                   FROM api_keys WHERE usuario_id=%s ORDER BY id DESC""",
+                (session["user_id"],))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return jsonify({"success": True, "items": rows})
+
+
+@app.route("/api/keys", methods=["POST"])
+@login_required_json
+def criar_key():
+    data = request.get_json() or {}
+    nome = (data.get("nome") or "Minha Key").strip()[:60]
+
+    raw, prefixo = generate_api_key()
+    key_hash = hash_api_key(raw)
+
+    conn = get_db_connection("sistema_assinaturas")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO api_keys (usuario_id, nome, api_key_hash, prefixo) VALUES (%s,%s,%s,%s)",
+        (session["user_id"], nome, key_hash, prefixo)
+    )
+    conn.commit()
+    key_id = cur.lastrowid
+    cur.close(); conn.close()
+
+    # Mostra a chave raw UMA vez
+    return jsonify({"success": True, "id": key_id, "api_key": raw, "prefixo": prefixo})
+
+
+@app.route("/api/keys/<int:key_id>/revogar", methods=["POST"])
+@login_required_json
+def revogar_key(key_id):
+    conn = get_db_connection("sistema_assinaturas")
+    cur = conn.cursor()
+    cur.execute(
+        """UPDATE api_keys
+           SET ativo=FALSE, revogado_em=NOW()
+           WHERE id=%s AND usuario_id=%s""",
+        (key_id, session["user_id"])
+    )
+    conn.commit()
+    ok = cur.rowcount > 0
+    cur.close(); conn.close()
+    return jsonify({"success": ok})
+
+@app.route("/api/v1/ping", methods=["GET"])
+@auth_required_session_or_apikey
+def api_v1_ping():
+    user_id = session.get("user_id") or getattr(request, "api_user_id", None)
+    return jsonify({"success": True, "user_id": user_id, "message": "pong"})
+
 
 
 # -------------------------
@@ -904,17 +1081,220 @@ def criar_projeto():
     if not conn:
         return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
 
+    try:
+        conn.start_transaction()
+
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO projetos (usuario_id, nome) VALUES (%s, %s)",
+            (session['user_id'], nome)
+        )
+        projeto_id = cur.lastrowid
+        cur.close()
+
+        log_projeto_event(
+            conn=conn,
+            usuario_id=session['user_id'],
+            projeto_id=projeto_id,
+            acao="create",
+            antes=None,
+            depois={"id": projeto_id, "nome": nome}
+        )
+
+        conn.commit()
+        return jsonify({'success': True, 'id': projeto_id, 'nome': nome})
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'message': 'Erro ao criar projeto', 'details': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route('/api/projetos/<int:projeto_id>', methods=['PATCH', 'PUT'])
+@api_access_required(count_call=False)
+def atualizar_projeto(projeto_id):
+    data = request.get_json() or {}
+    novo_nome = (data.get('nome') or '').strip()
+
+    if not novo_nome:
+        return jsonify({'success': False, 'message': 'Nome do projeto é obrigatório'}), 400
+
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    try:
+        conn.start_transaction()
+
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT id, nome FROM projetos WHERE id=%s AND usuario_id=%s FOR UPDATE",
+            (projeto_id, session['user_id'])
+        )
+        old = cur.fetchone()
+        cur.close()
+
+        if not old:
+            conn.rollback()
+            return jsonify({'success': False, 'message': 'Projeto não encontrado'}), 404
+
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE projetos SET nome=%s WHERE id=%s AND usuario_id=%s",
+            (novo_nome, projeto_id, session['user_id'])
+        )
+        cur.close()
+
+        log_projeto_event(
+            conn=conn,
+            usuario_id=session['user_id'],
+            projeto_id=projeto_id,
+            acao="rename",
+            antes={"nome": old["nome"]},
+            depois={"nome": novo_nome}
+        )
+
+        conn.commit()
+        return jsonify({'success': True, 'id': projeto_id, 'nome': novo_nome})
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'message': 'Erro ao atualizar projeto', 'details': str(e)}), 500
+    finally:
+        conn.close()
+
+
+
+@app.route('/api/projetos/<int:projeto_id>', methods=['DELETE'])
+@api_access_required(count_call=False)
+def deletar_projeto(projeto_id):
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    try:
+        conn.start_transaction()
+
+        # 1) pega estado "antes"
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            "SELECT id, nome FROM projetos WHERE id=%s AND usuario_id=%s FOR UPDATE",
+            (projeto_id, session['user_id'])
+        )
+        old = cur.fetchone()
+        cur.close()
+
+        if not old:
+            conn.rollback()
+            return jsonify({'success': False, 'message': 'Projeto não encontrado'}), 404
+
+        # 2) grava histórico ANTES de apagar (a FK ainda é válida aqui)
+        log_projeto_event(
+            conn=conn,
+            usuario_id=session['user_id'],
+            projeto_id=projeto_id,
+            acao="delete",
+            antes={"id": old["id"], "nome": old["nome"]},
+            depois=None
+        )
+
+        # 3) apaga o projeto
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM projetos WHERE id=%s AND usuario_id=%s",
+            (projeto_id, session['user_id'])
+        )
+        cur.close()
+
+        conn.commit()
+        return jsonify({'success': True})
+
+    except Exception as e:
+        conn.rollback()
+        print("ERRO deletar_projeto:", e)
+        return jsonify({'success': False, 'message': 'Erro ao deletar projeto', 'details': str(e)}), 500
+    finally:
+        conn.close()
+
+
+
+
+@app.route('/api/projetos/<int:projeto_id>/duplicar', methods=['POST'])
+@api_access_required(count_call=False)
+def duplicar_projeto(projeto_id):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    cur = conn.cursor(dictionary=True)
+    # busca projeto do próprio usuário
+    cur.execute(
+        "SELECT nome FROM projetos WHERE id=%s AND usuario_id=%s",
+        (projeto_id, session['user_id'])
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': 'Projeto não encontrado'}), 404
+
+    novo_nome = f"{row['nome']} (cópia)"
+
+    cur.close()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO projetos (usuario_id, nome) VALUES (%s, %s)",
-        (session['user_id'], nome)
+        (session['user_id'], novo_nome)
     )
     conn.commit()
-    projeto_id = cur.lastrowid
+    novo_id = cur.lastrowid
     cur.close()
     conn.close()
 
-    return jsonify({'success': True, 'id': projeto_id, 'nome': nome})
+    return jsonify({'success': True, 'id': novo_id, 'nome': novo_nome})
+
+
+
+@app.route('/api/projetos/<int:projeto_id>/historico', methods=['GET'])
+@api_access_required(count_call=False)
+def historico_projeto(projeto_id):
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    cur = conn.cursor(dictionary=True)
+
+    # Segurança: só permite ver histórico de projeto do próprio usuário.
+    cur.execute(
+        "SELECT 1 FROM projetos WHERE id=%s AND usuario_id=%s",
+        (projeto_id, session['user_id'])
+    )
+    ok = cur.fetchone()
+    if not ok:
+        cur.close()
+        conn.close()
+        return jsonify({'success': False, 'message': 'Projeto não encontrado'}), 404
+
+    cur.execute(
+        """SELECT id, acao, antes, depois, criado_em
+           FROM projeto_historico
+           WHERE projeto_id=%s AND usuario_id=%s
+           ORDER BY id DESC
+           LIMIT 50""",
+        (projeto_id, session['user_id'])
+    )
+    rows = cur.fetchall()
+
+    cur.close()
+    conn.close()
+    return jsonify({'success': True, 'items': rows})
+
+
+
 
 
 if __name__ == '__main__':
