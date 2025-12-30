@@ -501,12 +501,14 @@ if __name__ == '__main__':
     import os
 
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "80"))
+
+    # Se estiver no Square Cloud e PORT vier como 80, ele usa 80.
+    # No Codespace, geralmente PORT não vem -> cai em 5000.
+    port = int(os.getenv("PORT", "5000"))
 
     print("🚀 Iniciando Sistema de Assinaturas com PIX REAL...")
     init_database()
-    print(f"🌐 Servidor Flask em http://{host}:{port}")
+    print(f"🌐 Servidor em http://{host}:{port}")
 
-    # Em produção, debug precisa ser False
     app.run(debug=False, host=host, port=port)
 
