@@ -7,10 +7,11 @@ import secrets
 from datetime import datetime, timedelta
 import io
 import base64
-import uuid
-import mercadopago  # ✅ PIX REAL
-import qrcode  # ✅ Para QR Code
+import mercadopago  # PIX REAL
+import qrcode       # Para QR Code
 import os
+from functools import wraps
+
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://jpbot.squareweb.app/webhook")
 
 app = Flask(__name__)
@@ -19,26 +20,89 @@ CORS(app)
 
 # Configuração do MySQL no Square Cloud
 DB_CONFIG = {
-    'host': 'square-cloud-db-45ee9918389d44b3937fdb8e41f83048.squareweb.app',
-    'user': 'squarecloud',
-    'password': 'INNbhFE8vqhXzKTHUHLhLFWk',
-    'port': 7102
+    'host': os.getenv('DB_HOST', 'square-cloud-db-45ee9918389d44b3937fdb8e41f83048.squareweb.app'),
+    'user': os.getenv('DB_USER', 'squarecloud'),
+    'password': os.getenv('DB_PASSWORD', 'INNbhFE8vqhXzKTHUHLhLFWk'),
+    'port': int(os.getenv('DB_PORT', '7102'))
 }
 
-# ✅ CONFIGURAÇÕES MERCADO PAGO (TESTE OK!)
-# MERCADO_PAGO_ACCESS_TOKEN = "TEST-3798369418143337-122920-0cd50359605c7346d17426cef3ea0d31-496902134"
-# MERCADO_PAGO_PUBLIC_KEY = "TEST-a90e5029-325b-471a-a380-e5ac5cbcc8a8"
-
-# ✅ CONFIGURAÇÕES MERCADO PAGO (TESTE OK!)
-MERCADO_PAGO_ACCESS_TOKEN = "APP_USR-5510745273548389-122922-053d1050455391a02eece2b5052a1b08-496902134"
-MERCADO_PAGO_PUBLIC_KEY = "APP_USR-cd6283c6-f89b-4f57-94d3-a9d68b174a8a"
+# Mercado Pago (use env vars)
+MERCADO_PAGO_ACCESS_TOKEN = os.getenv("APP_USR-5510745273548389-122922-053d1050455391a02eece2b5052a1b08-496902134")
+MERCADO_PAGO_PUBLIC_KEY = os.getenv("APP_USR-cd6283c6-f89b-4f57-94d3-a9d68b174a8a")
 
 # Planos disponíveis
 PLANOS = {
-    'free': {'nome': 'Gratuito', 'preco': 0.00, 'recursos': ['Recurso básico', '5 projetos', 'Suporte por email']},
-    'pro': {'nome': 'Pro', 'preco': 19.99, 'recursos': ['Todos recursos básicos', '50 projetos', 'Suporte prioritário', 'API Access']},
-    'premium': {'nome': 'Premium', 'preco': 79.90, 'recursos': ['Recursos ilimitados', 'Projetos ilimitados', 'Suporte 24/7', 'API Access', 'Relatórios avançados']}
+    'free': {
+        'nome': 'Gratuito',
+        'preco': 0.00,
+        'recursos': [
+            'Recurso básico',
+            '5 projetos',
+            'Suporte por email'
+        ],
+        'limites': {
+            'projetos': 5,
+            'api_calls_mes': 0
+        },
+        'features': {
+            'api_access': False,
+            'relatorios_avancados': False,
+            'suporte_prioritario': False
+        }
+    },
+    'pro': {
+        'nome': 'Pro',
+        'preco': 1.00,
+        'recursos': [
+            'Todos recursos básicos',
+            '50 projetos',
+            'Suporte prioritário',
+            'API Access'
+        ],
+        'limites': {
+            'projetos': 50,
+            'api_calls_mes': 10000
+        },
+        'features': {
+            'api_access': True,
+            'relatorios_avancados': False,
+            'suporte_prioritario': True
+        }
+    },
+    'premium': {
+        'nome': 'Premium',
+        'preco': 79.90,
+        'recursos': [
+            'Recursos ilimitados',
+            'Projetos ilimitados',
+            'Suporte 24/7',
+            'API Access',
+            'Relatórios avançados'
+        ],
+        'limites': {
+            'projetos': None,  # None = ilimitado
+            'api_calls_mes': 100000
+        },
+        'features': {
+            'api_access': True,
+            'relatorios_avancados': True,
+            'suporte_prioritario': True
+        }
+    }
 }
+
+
+# -------------------------
+# Helpers
+# -------------------------
+def login_required_json(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
 
 def ensure_column(cursor, table, column, ddl):
     cursor.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (column,))
@@ -46,13 +110,14 @@ def ensure_column(cursor, table, column, ddl):
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
         print(f"✅ Coluna {table}.{column} adicionada")
 
+
 def sanitize_cpf(cpf: str) -> str:
     if not cpf:
         return ""
     return "".join(ch for ch in str(cpf) if ch.isdigit())
 
+
 def is_cpf_basic_valid(cpf_digits: str) -> bool:
-    # validação mínima server-side
     if len(cpf_digits) != 11:
         return False
     if cpf_digits == cpf_digits[0] * 11:
@@ -61,30 +126,28 @@ def is_cpf_basic_valid(cpf_digits: str) -> bool:
 
 
 def get_db_connection(database=None):
-    """Conecta ao banco de dados MySQL"""
     config = DB_CONFIG.copy()
     if database:
         config['database'] = database
     try:
-        connection = mysql.connector.connect(**config)
-        return connection
+        return mysql.connector.connect(**config)
     except Error as e:
         print(f"Erro ao conectar ao MySQL: {e}")
         return None
 
+
 def create_database():
-    """Cria a database se não existir"""
     print("🔄 Verificando se database 'sistema_assinaturas' existe...")
-    
+
     conn = get_db_connection()
     if not conn:
         print("❌ Falha na conexão com o servidor MySQL")
         return False
-    
+
     cursor = conn.cursor()
     cursor.execute("SHOW DATABASES LIKE 'sistema_assinaturas'")
     db_exists = cursor.fetchone()
-    
+
     if not db_exists:
         print("📦 Criando database 'sistema_assinaturas'...")
         cursor.execute("CREATE DATABASE IF NOT EXISTS sistema_assinaturas")
@@ -92,26 +155,26 @@ def create_database():
         print("✅ Database 'sistema_assinaturas' criada com sucesso!")
     else:
         print("✅ Database 'sistema_assinaturas' já existe!")
-    
+
     cursor.close()
     conn.close()
     return True
 
+
 def init_database():
-    """Inicializa as tabelas do banco de dados COM VERIFICAÇÃO DE COLUNAS"""
     print("🛠️ Inicializando tabelas...")
-    
+
     if not create_database():
         print("❌ Falha ao criar database")
         return
-    
+
     conn = get_db_connection('sistema_assinaturas')
     if not conn:
         print("❌ Falha ao conectar na database")
         return
-    
+
     cursor = conn.cursor()
-    
+
     # Tabela de usuários
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -120,14 +183,15 @@ def init_database():
             email VARCHAR(100) UNIQUE NOT NULL,
             senha VARCHAR(255) NOT NULL,
             plano VARCHAR(20) DEFAULT 'free',
+            cpf VARCHAR(11) NULL,
             data_cadastro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             ativo BOOLEAN DEFAULT TRUE,
             INDEX idx_email (email),
             INDEX idx_plano (plano)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
-    
-    # Tabela de pagamentos (COMPLETA)
+
+    # Tabela de pagamentos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagamentos (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -138,6 +202,7 @@ def init_database():
             mp_payment_id VARCHAR(100),
             qr_code TEXT,
             qr_string TEXT,
+            cpf VARCHAR(11) NULL,
             status VARCHAR(20) DEFAULT 'pendente',
             data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             data_expiracao TIMESTAMP,
@@ -149,20 +214,33 @@ def init_database():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
+    # Projetos (para limite por plano)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS projetos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL,
+            nome VARCHAR(120) NOT NULL,
+            data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+            INDEX idx_usuario (usuario_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # Uso mensal API (pronto para usar depois)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS api_uso_mensal (
+            usuario_id INT NOT NULL,
+            ano_mes CHAR(7) NOT NULL,
+            total INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (usuario_id, ano_mes),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    # Garante colunas antigas (caso já existam tabelas sem elas)
     ensure_column(cursor, "usuarios", "cpf", "cpf VARCHAR(11) NULL")
     ensure_column(cursor, "pagamentos", "cpf", "cpf VARCHAR(11) NULL")
-    
-    # ✅ VERIFICAR E ADICIONAR COLUNAS SE FALTAREM
-    cursor.execute("SHOW COLUMNS FROM pagamentos LIKE 'mp_payment_id'")
-    if not cursor.fetchone():
-        cursor.execute("ALTER TABLE pagamentos ADD COLUMN mp_payment_id VARCHAR(100)")
-        print("✅ Coluna mp_payment_id adicionada")
-    
-    cursor.execute("SHOW COLUMNS FROM pagamentos LIKE 'qr_string'")
-    if not cursor.fetchone():
-        cursor.execute("ALTER TABLE pagamentos ADD COLUMN qr_string TEXT")
-        print("✅ Coluna qr_string adicionada")
-    
+
     # Usuário de teste
     cursor.execute("SELECT COUNT(*) FROM usuarios WHERE email = 'teste@email.com'")
     if cursor.fetchone()[0] == 0:
@@ -172,31 +250,210 @@ def init_database():
             ("Usuário Teste", "teste@email.com", senha_teste, "free")
         )
         print("👤 Usuário de teste criado: teste@email.com / teste123")
-    
+
     conn.commit()
     cursor.close()
     conn.close()
     print("✅ Banco de dados inicializado completamente!")
 
+
 def hash_password(password):
-    """Hash de senha usando SHA-256"""
     return hashlib.sha256(password.encode()).hexdigest()
 
-def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
-    """✅ GERA PIX REAL com Mercado Pago (CPF dentro de payer.identification)"""
+
+# -------------------------
+# Plano / Limites (projetos)
+# -------------------------
+def get_user_plano(usuario_id):
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return "free"
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT plano FROM usuarios WHERE id=%s", (usuario_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row["plano"] if row else "free"
+
+
+def can_create_project(usuario_id):
+    plano = get_user_plano(usuario_id)
+    limite = PLANOS[plano]["limites"]["projetos"]
+
+    if limite is None:
+        return True, None
+
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return False, "Erro ao conectar ao banco."
+
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM projetos WHERE usuario_id=%s", (usuario_id,))
+    qtd = cur.fetchone()[0]
+    cur.close()
+    conn.close()
+
+    if qtd >= limite:
+        return False, f"Limite do plano {plano}: {limite} projetos."
+    return True, None
+
+
+def get_ano_mes(dt=None):
+    dt = dt or datetime.utcnow()
+    return dt.strftime("%Y-%m")  # ex: '2025-12'
+
+
+def get_api_quota_limit(plano: str):
+    plano = plano if plano in PLANOS else "free"
+    return PLANOS[plano]["limites"]["api_calls_mes"]
+
+
+def get_api_usage(usuario_id: int, ano_mes: str):
+    conn = get_db_connection("sistema_assinaturas")
+    if not conn:
+        return 0
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT total FROM api_uso_mensal WHERE usuario_id=%s AND ano_mes=%s",
+        (usuario_id, ano_mes)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return int(row[0]) if row else 0
+
+
+def try_consume_api_call(usuario_id: int):
+    """
+    Tenta consumir 1 API call do mês atual.
+    Retorna (allowed, info_dict)
+    """
+    plano = get_user_plano(usuario_id)
+    limit = get_api_quota_limit(plano)
+    ano_mes = get_ano_mes()
+
+    # Sem acesso a API no FREE (limit=0)
+    if limit is not None and limit <= 0:
+        return False, {"plano": plano, "limit": limit, "used": 0, "ano_mes": ano_mes}
+
+    conn = get_db_connection("sistema_assinaturas")
+    if not conn:
+        return False, {"plano": plano, "limit": limit, "used": None, "ano_mes": ano_mes, "error": "db"}
+
+    cur = conn.cursor()
+
     try:
+        conn.start_transaction()
+
+        # trava a linha do mês (se existir) para evitar corrida [web:396]
+        cur.execute(
+            "SELECT total FROM api_uso_mensal WHERE usuario_id=%s AND ano_mes=%s FOR UPDATE",
+            (usuario_id, ano_mes)
+        )
+        row = cur.fetchone()
+
+        if not row:
+            # primeira chamada do mês
+            used_after = 1
+            if limit is not None and used_after > limit:
+                conn.rollback()
+                return False, {"plano": plano, "limit": limit, "used": 0, "ano_mes": ano_mes}
+
+            cur.execute(
+                "INSERT INTO api_uso_mensal (usuario_id, ano_mes, total) VALUES (%s, %s, %s)",
+                (usuario_id, ano_mes, used_after)
+            )
+            conn.commit()
+            return True, {"plano": plano, "limit": limit, "used": used_after, "ano_mes": ano_mes}
+
+        used = int(row[0])
+
+        # limite atingido
+        if limit is not None and used >= limit:
+            conn.rollback()
+            return False, {"plano": plano, "limit": limit, "used": used, "ano_mes": ano_mes}
+
+        used_after = used + 1
+        cur.execute(
+            "UPDATE api_uso_mensal SET total=%s WHERE usuario_id=%s AND ano_mes=%s",
+            (used_after, usuario_id, ano_mes)
+        )
+        conn.commit()
+        return True, {"plano": plano, "limit": limit, "used": used_after, "ano_mes": ano_mes}
+
+    except Exception as e:
+        conn.rollback()
+        return False, {"plano": plano, "limit": limit, "used": None, "ano_mes": ano_mes, "error": str(e)}
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/ping", methods=["GET"])
+def api_ping():
+    if "user_id" not in session:
+        return jsonify({"success": False, "message": "Usuário não autenticado"}), 401
+
+    allowed, info = try_consume_api_call(session["user_id"])
+    if not allowed:
+        # 429 é o status mais usado para limite/quotas estouradas [web:398]
+        return jsonify({
+            "success": False,
+            "message": "Quota mensal de API atingida.",
+            "quota": info
+        }), 429
+
+    return jsonify({
+        "success": True,
+        "message": "pong",
+        "quota": info
+    })
+
+
+@app.route("/api/quota", methods=["GET"])
+def api_quota():
+    if "user_id" not in session:
+        return jsonify({"success": False}), 401
+
+    plano = get_user_plano(session["user_id"])
+    ano_mes = get_ano_mes()
+    used = get_api_usage(session["user_id"], ano_mes)
+    limit = get_api_quota_limit(plano)
+
+    return jsonify({
+        "success": True,
+        "plano": plano,
+        "ano_mes": ano_mes,
+        "used": used,
+        "limit": limit
+    })
+
+
+
+
+
+
+
+
+# -------------------------
+# Mercado Pago / PIX
+# -------------------------
+def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
+    try:
+        if not MERCADO_PAGO_ACCESS_TOKEN:
+            return {"success": False, "error": "MERCADO_PAGO_ACCESS_TOKEN não configurado."}
+
         print(f"💳 Criando PIX Mercado Pago: R${valor} - Plano {plano}")
 
         sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
 
-        # ✅ NÃO existe "identification" no nível raiz.
-        # ✅ CPF deve ir em payer.identification (type/number).
         payment_data = {
             "transaction_amount": float(valor),
             "payment_method_id": "pix",
             "description": f"Assinatura JPBOT - {PLANOS[plano]['nome']}",
             "external_reference": f"{session['user_id']}_{plano}_{int(datetime.now().timestamp())}",
-            "notification_url": WEBHOOK_URL,  # ✅ agora é URL válida
+            "notification_url": WEBHOOK_URL,
             "payer": {
                 "email": session.get("user_email", "cliente@exemplo.com"),
                 "first_name": session.get("user_name", "Cliente"),
@@ -205,23 +462,15 @@ def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
             }
         }
 
-
-        # Debug durante testes
         print("➡️ payment_data =", payment_data)
 
         response = sdk.payment().create(payment_data)
         payment = response.get("response", {})
 
-        # Se a API devolveu erro no body
-        if isinstance(payment.get("status"), int) and payment.get("status") >= 400:
-            print(f"❌ Mercado Pago ERROR BODY: {payment}")
-            return {"success": False, "error": payment.get("message", "Erro Mercado Pago"), "details": payment}
-
         status = payment.get("status")
         print(f"📋 Mercado Pago Response status: {status}")
 
         if status != "pending":
-            print(f"❌ Resposta inesperada: {payment}")
             return {
                 "success": False,
                 "error": f"Pagamento não ficou pendente: {payment.get('status_detail', status)}",
@@ -232,13 +481,11 @@ def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
         qr_data = None
         qr_string = None
 
-        # Pega dados do PIX
         poi = payment.get("point_of_interaction") or {}
         tx = poi.get("transaction_data") or {}
         qr_string = tx.get("qr_code")
         qr_base64 = tx.get("qr_code_base64")
 
-        # Se vier base64 do MP, usa direto; se não, gera imagem a partir do "copia e cola"
         if qr_base64:
             qr_data = qr_base64
         elif qr_string:
@@ -250,7 +497,6 @@ def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
             img.save(buffered, format="PNG")
             qr_data = base64.b64encode(buffered.getvalue()).decode()
 
-        # Salvar no banco (incluindo cpf)
         conn = get_db_connection("sistema_assinaturas")
         if conn:
             cursor = conn.cursor()
@@ -281,12 +527,15 @@ def gerar_pix_qrcode(valor, usuario_id, plano, cpf_digits):
         return {"success": False, "error": str(e)}
 
 
-# Rotas (todas iguais)
+# -------------------------
+# Rotas (páginas)
+# -------------------------
 @app.route('/')
 def index():
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
     return render_template('login.html')
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -294,7 +543,7 @@ def login():
         data = request.get_json()
         email = data.get('email')
         senha = hash_password(data.get('senha'))
-        
+
         conn = get_db_connection('sistema_assinaturas')
         if conn:
             cursor = conn.cursor(dictionary=True)
@@ -302,17 +551,18 @@ def login():
             usuario = cursor.fetchone()
             cursor.close()
             conn.close()
-            
+
             if usuario:
                 session['user_id'] = usuario['id']
                 session['user_name'] = usuario['nome']
                 session['user_email'] = usuario['email']
                 session['user_plano'] = usuario['plano']
                 return jsonify({'success': True, 'redirect': '/dashboard'})
-            else:
-                return jsonify({'success': False, 'message': 'Email ou senha incorretos'})
-    
+
+        return jsonify({'success': False, 'message': 'Email ou senha incorretos'})
+
     return render_template('login.html')
+
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -320,7 +570,7 @@ def register():
     nome = data.get('nome')
     email = data.get('email')
     senha = hash_password(data.get('senha'))
-    
+
     conn = get_db_connection('sistema_assinaturas')
     if conn:
         try:
@@ -333,17 +583,18 @@ def register():
             cursor.close()
             conn.close()
             return jsonify({'success': True, 'message': 'Cadastro realizado com sucesso!'})
-        except Error as e:
+        except Error:
             return jsonify({'success': False, 'message': 'Email já cadastrado'})
-    
+
     return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'})
+
 
 @app.route('/dashboard')
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    # ✅ Sincroniza o plano da sessão com o banco (caso tenha mudado via webhook)
+    # Sincroniza plano da sessão com o banco
     conn = get_db_connection('sistema_assinaturas')
     if conn:
         cursor = conn.cursor(dictionary=True)
@@ -354,18 +605,26 @@ def dashboard():
         cursor.close()
         conn.close()
 
-    # Stats (mantido)
-    conn = get_db_connection('sistema_assinaturas')
+    plano_atual = session.get('user_plano', 'free')
+    limite_projetos = PLANOS.get(plano_atual, PLANOS['free'])['limites']['projetos']
+
     stats = {
         'projetos': 0,
+        'limite_projetos': limite_projetos,
         'armazenamento': '0 MB',
-        'api_calls': 0
+        'api_calls': 0,
+        'total_usuarios': 0
     }
 
+    conn = get_db_connection('sistema_assinaturas')
     if conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM usuarios WHERE ativo = TRUE")
         stats['total_usuarios'] = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM projetos WHERE usuario_id=%s", (session['user_id'],))
+        stats['projetos'] = cursor.fetchone()[0]
+
         cursor.close()
         conn.close()
 
@@ -378,6 +637,16 @@ def planos():
         return redirect(url_for('login'))
     return render_template('planos.html', planos=PLANOS)
 
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# -------------------------
+# Pagamento / Webhook
+# -------------------------
 @app.route('/criar_pagamento', methods=['POST'])
 def criar_pagamento():
     if 'user_id' not in session:
@@ -402,12 +671,12 @@ def criar_pagamento():
             session['user_plano'] = plano
         return jsonify({'success': True, 'plano': 'free'})
 
-    # ✅ Planos pagos: CPF obrigatório
-    cpf_digits = ''.join(ch for ch in str(cpf) if ch.isdigit())
-    if len(cpf_digits) != 11 or cpf_digits == cpf_digits[0] * 11:
+    # Planos pagos: CPF obrigatório
+    cpf_digits = sanitize_cpf(cpf)
+    if not is_cpf_basic_valid(cpf_digits):
         return jsonify({'success': False, 'message': 'CPF inválido'}), 400
 
-    # (Opcional) salvar cpf no usuário
+    # Salvar cpf no usuário (opcional)
     conn = get_db_connection('sistema_assinaturas')
     if conn:
         cursor = conn.cursor()
@@ -422,13 +691,11 @@ def criar_pagamento():
     if pix_data.get('success'):
         return jsonify(pix_data)
 
-    # devolve o erro real do MP para você depurar no front
     return jsonify({
         'success': False,
         'message': pix_data.get('error', 'Erro ao gerar PIX'),
         'details': pix_data.get('details')
     }), 400
-
 
 
 @app.route('/verificar_pagamento/<pix_id>', methods=['GET'])
@@ -451,7 +718,6 @@ def verificar_pagamento(pix_id):
         if not pagamento:
             return jsonify({'success': False, 'message': 'Pagamento não encontrado'}), 404
 
-        # Já confirmado no seu banco
         if pagamento.get('status') == 'confirmado':
             cursor.execute(
                 "UPDATE usuarios SET plano = %s WHERE id = %s",
@@ -461,17 +727,18 @@ def verificar_pagamento(pix_id):
             session['user_plano'] = pagamento['plano']
             return jsonify({'success': True, 'status': 'confirmado', 'plano': pagamento['plano']})
 
-        # Se está pendente, consulta o Mercado Pago
         mp_payment_id = pagamento.get('mp_payment_id')
         if not mp_payment_id:
             return jsonify({'success': True, 'status': 'pendente'})
+
+        if not MERCADO_PAGO_ACCESS_TOKEN:
+            return jsonify({'success': True, 'status': 'pendente', 'mp_status': None})
 
         sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
         mp_resp = sdk.payment().get(str(mp_payment_id))
         mp_payment = mp_resp.get('response', {})
         mp_status = mp_payment.get('status')
 
-        # approved = pago/confirmado
         if mp_status == 'approved':
             cursor.execute(
                 "UPDATE pagamentos SET status = 'confirmado' WHERE pix_id = %s AND usuario_id = %s",
@@ -485,7 +752,6 @@ def verificar_pagamento(pix_id):
             session['user_plano'] = pagamento['plano']
             return jsonify({'success': True, 'status': 'confirmado', 'plano': pagamento['plano']})
 
-        # Se ainda não aprovou, segue pendente (você pode retornar mp_status para debug)
         return jsonify({'success': True, 'status': 'pendente', 'mp_status': mp_status})
 
     finally:
@@ -498,23 +764,21 @@ def webhook():
     try:
         payload = request.get_json(silent=True) or {}
 
-        # 1) ID vindo no JSON padrão (igual ao que você mostrou no painel do MP)
         payment_id = (payload.get("data") or {}).get("id")
-
-        # 2) Fallback: query params (você tem requests como /webhook?data.id=... e /webhook?id=...&topic=payment)
         if not payment_id:
             payment_id = request.args.get("id") or request.args.get("data.id")
 
         if not payment_id:
             return jsonify({"status": "ok", "message": "no payment id"}), 200
 
-        sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
+        if not MERCADO_PAGO_ACCESS_TOKEN:
+            return jsonify({"status": "ok", "message": "no access token"}), 200
 
-        # ✅ No SDK python, o método é .get(id), não find_by_id [web:291]
+        sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
         mp_resp = sdk.payment().get(str(payment_id))
         mp_payment = mp_resp.get("response", {})
-
         mp_status = mp_payment.get("status")
+
         print(f"🔔 Webhook recebido payment_id={payment_id} status={mp_status}")
 
         if mp_status == "approved":
@@ -546,31 +810,89 @@ def webhook():
         return jsonify({"status": "ok"}), 200
 
 
-
-@app.route('/logout')
-def logout():
-    session.clear()
-    return redirect(url_for('login'))
-
+# -------------------------
+# API do usuário
+# -------------------------
 @app.route('/api/user_info')
 def user_info():
     if 'user_id' not in session:
         return jsonify({'success': False})
-    
+
+    # sempre tenta refletir o plano real do banco
+    plano_atual = get_user_plano(session['user_id'])
+    session['user_plano'] = plano_atual
+
     return jsonify({
         'success': True,
         'nome': session.get('user_name'),
         'email': session.get('user_email'),
-        'plano': session.get('user_plano')
+        'plano': plano_atual
     })
 
+
+# -------------------------
+# API de Projetos (limite por plano)
+# -------------------------
+@app.route('/api/projetos', methods=['GET'])
+@login_required_json
+def listar_projetos():
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id, nome, data_criacao FROM projetos WHERE usuario_id=%s ORDER BY id DESC",
+        (session['user_id'],)
+    )
+    projetos = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    plano = get_user_plano(session['user_id'])
+    limite = PLANOS[plano]["limites"]["projetos"]
+
+    return jsonify({
+        'success': True,
+        'plano': plano,
+        'limite_projetos': limite,
+        'total_projetos': len(projetos),
+        'projetos': projetos
+    })
+
+
+@app.route('/api/projetos', methods=['POST'])
+@login_required_json
+def criar_projeto():
+    data = request.get_json() or {}
+    nome = (data.get('nome') or '').strip()
+
+    if not nome:
+        return jsonify({'success': False, 'message': 'Nome do projeto é obrigatório'}), 400
+
+    ok, msg = can_create_project(session['user_id'])
+    if not ok:
+        return jsonify({'success': False, 'message': msg}), 403
+
+    conn = get_db_connection('sistema_assinaturas')
+    if not conn:
+        return jsonify({'success': False, 'message': 'Erro ao conectar ao banco'}), 500
+
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO projetos (usuario_id, nome) VALUES (%s, %s)",
+        (session['user_id'], nome)
+    )
+    conn.commit()
+    projeto_id = cur.lastrowid
+    cur.close()
+    conn.close()
+
+    return jsonify({'success': True, 'id': projeto_id, 'nome': nome})
+
+
 if __name__ == '__main__':
-    import os
-
     host = os.getenv("HOST", "0.0.0.0")
-
-    # Se estiver no Square Cloud e PORT vier como 80, ele usa 80.
-    # No Codespace, geralmente PORT não vem -> cai em 5000.
     port = int(os.getenv("PORT", "5000"))
 
     print("🚀 Iniciando Sistema de Assinaturas com PIX REAL...")
@@ -578,4 +900,3 @@ if __name__ == '__main__':
     print(f"🌐 Servidor em http://{host}:{port}")
 
     app.run(debug=False, host=host, port=port)
-
