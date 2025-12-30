@@ -11,6 +11,8 @@ import mercadopago  # PIX REAL
 import qrcode       # Para QR Code
 import os
 from functools import wraps
+from datetime import datetime, timedelta, timezone
+
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://jpbot.squareweb.app/webhook")
 
@@ -303,17 +305,19 @@ def can_create_project(usuario_id):
 # API Access + Quota mensal
 # -------------------------
 def get_ano_mes(dt=None):
-    dt = dt or datetime.utcnow()
-    return dt.strftime("%Y-%m")  # ex: '2025-12'
+    dt = dt or datetime.now(timezone.utc)
+    return dt.strftime("%Y-%m")
 
 
 def seconds_until_next_month_utc(now=None):
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc)
+
     year, month = now.year, now.month
     if month == 12:
-        next_month = datetime(year + 1, 1, 1)
+        next_month = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
     else:
-        next_month = datetime(year, month + 1, 1)
+        next_month = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+
     return int((next_month - now).total_seconds())
 
 
