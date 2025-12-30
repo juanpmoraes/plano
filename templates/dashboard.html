@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - JPBOT</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-content">
+            <h1>🚀 JPBOT</h1>
+            <div class="nav-right">
+                <span id="user-name">Carregando...</span>
+                <span class="badge" id="user-plano">FREE</span>
+                <a href="/planos" class="btn-secondary">Planos</a>
+                <a href="/logout" class="btn-secondary">Sair</a>
+            </div>
+        </div>
+    </nav>
+    
+    <div class="dashboard-container">
+        <main class="main-content">
+            <h2>Dashboard</h2>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📁</div>
+                    <div class="stat-info">
+                        <h3>{{ stats.projetos }}</h3>
+                        <p>Projetos</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">💾</div>
+                    <div class="stat-info">
+                        <h3>{{ stats.armazenamento }}</h3>
+                        <p>Armazenamento</p>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-info">
+                        <h3>{{ stats.total_usuarios }}</h3>
+                        <p>Usuários</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-section">
+                <h3>Minha Conta</h3>
+                <div class="info-card">
+                    <p><strong>Nome:</strong> <span id="user-email">Carregando...</span></p>
+                    <p><strong>Plano:</strong> <span id="plano-atual" class="badge">FREE</span></p>
+                    <a href="/planos" class="btn-primary">Atualizar Plano</a>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

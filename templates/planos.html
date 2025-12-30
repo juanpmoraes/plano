@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Planos - JPBOT</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-content">
+      <h1>🚀 JPBOT</h1>
+      <div class="nav-right">
+        <a href="/dashboard" class="btn-secondary">Dashboard</a>
+        <a href="/logout" class="btn-secondary">Sair</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="planos-container">
+    <h2>Escolha seu Plano</h2>
+
+    <div class="planos-grid">
+      {% for key, plano in planos.items() %}
+      <div class="plano-card {% if key == 'pro' %}featured{% endif %}">
+        <h3>{{ plano.nome }}</h3>
+
+        <div class="preco">
+          {% if plano.preco == 0 %}
+          <span class="valor">GRÁTIS</span>
+          {% else %}
+          <span class="cifrao">R$</span>
+          <span class="valor">{{ "%.2f"|format(plano.preco) }}</span>
+          <span class="periodo">/mês</span>
+          {% endif %}
+        </div>
+
+        <ul class="recursos">
+          {% for recurso in plano.recursos %}
+          <li>✓ {{ recurso }}</li>
+          {% endfor %}
+        </ul>
+
+        <button class="btn-plano" onclick="selecionarPlano('{{ key }}')">
+          {% if key == 'free' %}Começar Grátis{% else %}Assinar{% endif %}
+        </button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Modal CPF -->
+  <div id="cpf-modal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="fecharCpfModal()">&times;</span>
+      <h3>Informe seu CPF</h3>
+
+      <div class="form-group">
+        <label>CPF</label>
+        <input id="cpf-input" type="text" placeholder="123.456.789-09" maxlength="14" />
+        <div id="cpf-error" class="message error" style="display:none;"></div>
+      </div>
+
+      <button class="btn-primary" onclick="confirmarCompra()">Gerar PIX</button>
+    </div>
+  </div>
+
+  <!-- Modal PIX -->
+  <div id="pix-modal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="fecharPixModal()">&times;</span>
+      <h3>Pagamento via PIX</h3>
+      <p>Escaneie o QR Code abaixo:</p>
+
+      <div class="qr-container">
+        <img id="pix-qr-img" alt="QR Code PIX" />
+      </div>
+
+      <p class="info-text">Ou copie o código PIX (copia e cola):</p>
+      <div class="pix-code">
+        <input id="pix-copy" type="text" readonly />
+        <button onclick="copiarPix()">Copiar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/planos.js') }}"></script>
+</body>
+</html>
