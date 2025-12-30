@@ -135,19 +135,37 @@ async function confirmarCompra() {
   }
 
   abrirPixModal(data.qr_code, data.qr_string);
+  iniciarVerificacaoPix(data.pix_id);
 }
 
+let pollingTimer = null;
+
+function mostrarSucesso(plano) {
+  fecharPixModal();
+
+  const modal = document.getElementById("success-modal");
+  const txt = document.getElementById("success-plan-text");
+
+  txt.textContent = `Seu novo plano: ${String(plano || "pro").toUpperCase()}`;
+  modal.style.display = "block";
+}
 
 function iniciarVerificacaoPix(pixId) {
-  const interval = setInterval(async () => {
+  if (pollingTimer) clearInterval(pollingTimer); // evita múltiplos intervals [web:324]
+
+  pollingTimer = setInterval(async () => {
     try {
       const r = await fetch(`/verificar_pagamento/${pixId}`);
       const j = await r.json();
 
       if (j.success && j.status === "confirmado") {
-        clearInterval(interval);
-        alert("✅ Pagamento confirmado! Plano ativado.");
-        window.location.href = "/dashboard";
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+
+        mostrarSucesso(j.plano);
+
+        // Redireciona e o dashboard já mostra o plano atualizado
+        setTimeout(() => (window.location.href = "/dashboard"), 2000);
       }
     } catch (e) {
       // ignora falhas temporárias
