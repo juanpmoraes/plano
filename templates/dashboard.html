@@ -1,63 +1,209 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - JPBOT</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-    <nav class="navbar">
-        <div class="nav-content">
-            <h1>🚀 JPBOT</h1>
-            <div class="nav-right">
-                <span id="user-name">Carregando...</span>
-                <span class="badge" id="user-plano">FREE</span>
-                <a href="/planos" class="btn-secondary">Planos</a>
-                <a href="/logout" class="btn-secondary">Sair</a>
-            </div>
-        </div>
-    </nav>
-    
-    <div class="dashboard-container">
-        <main class="main-content">
-            <h2>Dashboard</h2>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-icon">📁</div>
-                    <div class="stat-info">
-                        <h3>{{ stats.projetos }}</h3>
-                        <p>Projetos</p>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">💾</div>
-                    <div class="stat-info">
-                        <h3>{{ stats.armazenamento }}</h3>
-                        <p>Armazenamento</p>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-icon">👥</div>
-                    <div class="stat-info">
-                        <h3>{{ stats.total_usuarios }}</h3>
-                        <p>Usuários</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="info-section">
-                <h3>Minha Conta</h3>
-                <div class="info-card">
-                    <p><strong>Nome:</strong> <span id="user-email">Carregando...</span></p>
-                    <p><strong>Plano:</strong> <span id="plano-atual" class="badge">FREE</span></p>
-                    <a href="/planos" class="btn-primary">Atualizar Plano</a>
-                </div>
-            </div>
-        </main>
+{% extends "base.html" %}
+{% block title %}Dashboard | JPBOT{% endblock %}
+
+{% block content %}
+  <div class="grid">
+    <div class="card" style="grid-column: span 12;">
+      <div class="h1">Dashboard</div>
+      <div class="muted">Gerencie seus projetos, plano e quota da API.</div>
     </div>
-    
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
-</body>
-</html>
+
+    <div class="card" style="grid-column: span 4;">
+      <div class="h2">Projetos</div>
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div style="font-size:26px; font-weight:700;">{{ stats.projetos }}</div>
+          <div class="muted small">Total de projetos</div>
+        </div>
+        <div class="right">
+          <div class="tag warn small" id="limiteProjetosTag">Limite: {{ stats.limite_projetos }}</div>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div class="muted small">Dica: crie projetos pela seção “Projetos”.</div>
+    </div>
+
+    <div class="card" style="grid-column: span 4;">
+      <div class="h2">Usuários ativos</div>
+      <div style="font-size:26px; font-weight:700;">{{ stats.total_usuarios }}</div>
+      <div class="muted small">Total de usuários ativos no sistema</div>
+    </div>
+
+    <div class="card" style="grid-column: span 4;">
+      <div class="h2">Quota API (mês)</div>
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div style="font-size:26px; font-weight:700;" id="apiUsed">—</div>
+          <div class="muted small">Usadas</div>
+        </div>
+        <div class="right">
+          <div style="font-size:26px; font-weight:700;" id="apiLimit">—</div>
+          <div class="muted small">Limite</div>
+        </div>
+      </div>
+      <div class="hr"></div>
+      <div class="row">
+        <span class="pill small mono" id="anoMes">—</span>
+        <a class="pill small" href="/planos">Fazer upgrade</a>
+      </div>
+    </div>
+
+    <div class="card" style="grid-column: span 12;">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div class="h2">Projetos</div>
+          <div class="muted small">Listagem e criação.</div>
+        </div>
+        <button class="btn" id="btnReloadProjetos">Recarregar</button>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="grid">
+        <div style="grid-column: span 5;">
+          <div class="h2">Criar projeto</div>
+          <input id="novoProjetoNome" class="input" placeholder="Nome do projeto">
+          <div class="row" style="margin-top:10px;">
+            <button class="btn btn-primary" id="btnCriarProjeto">Criar</button>
+            <span id="projetoMsg" class="muted small"></span>
+          </div>
+          <div class="hr"></div>
+          <div class="muted small">
+            Se bater limite de projetos, o backend retorna 403 com a mensagem do plano.
+          </div>
+        </div>
+
+        <div style="grid-column: span 7;">
+          <div class="h2">Sua lista</div>
+          <div id="projetosList" class="muted">Carregando...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="grid-column: span 12;">
+      <div class="h2">Status</div>
+      <div class="row" style="gap:12px;">
+        <span class="pill small">Nome: <b id="userNome">—</b></span>
+        <span class="pill small">Email: <b id="userEmail">—</b></span>
+        <span class="pill small">Plano: <b id="userPlano">—</b></span>
+      </div>
+      <div class="hr"></div>
+      <div id="statusMsg" class="muted small">—</div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function getJSON(url){
+    const res = await fetch(url, { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  async function postJSON(url, body){
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  function renderProjetos(payload){
+    const el = document.getElementById("projetosList");
+    if (!payload || !payload.success) {
+      el.textContent = "Falha ao carregar projetos.";
+      return;
+    }
+    const projetos = payload.projetos || [];
+    if (!projetos.length){
+      el.innerHTML = "<div class='muted'>Nenhum projeto ainda.</div>";
+      return;
+    }
+    el.innerHTML = projetos.map(p => {
+      const d = (p.data_criacao || "").toString();
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div class="row" style="justify-content:space-between;">
+            <div><b>${escapeHtml(p.nome || "")}</b></div>
+            <div class="muted small mono">#${p.id}</div>
+          </div>
+          <div class="muted small">Criado em: ${escapeHtml(d)}</div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function escapeHtml(s){
+    return (s || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;")
+                   .replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  }
+
+  async function loadUserInfo(){
+    const r = await getJSON("/api/user_info");
+    if (!r.ok || !r.data.success){
+      document.getElementById("statusMsg").textContent = "Não autenticado (recarregue a página).";
+      return;
+    }
+    document.getElementById("userNome").textContent = r.data.nome || "—";
+    document.getElementById("userEmail").textContent = r.data.email || "—";
+    document.getElementById("userPlano").textContent = r.data.plano || "—";
+  }
+
+  async function loadQuota(){
+    const r = await getJSON("/api/quota");
+    if (!r.ok || !r.data.success){
+      document.getElementById("apiUsed").textContent = "—";
+      document.getElementById("apiLimit").textContent = "—";
+      document.getElementById("anoMes").textContent = "—";
+      return;
+    }
+    document.getElementById("apiUsed").textContent = r.data.used ?? "0";
+    document.getElementById("apiLimit").textContent = r.data.limit ?? "—";
+    document.getElementById("anoMes").textContent = r.data.ano_mes ?? "—";
+  }
+
+  async function loadProjetos(){
+    const r = await getJSON("/api/projetos");
+    if (r.status === 429){
+      const quota = r.data && r.data.quota ? r.data.quota : null;
+      document.getElementById("statusMsg").textContent =
+        "Quota de API atingida. Use /api/quota ou faça upgrade. " + (quota ? ("(" + JSON.stringify(quota) + ")") : "");
+      document.getElementById("projetosList").textContent = "Quota de API atingida.";
+      return;
+    }
+    renderProjetos(r.data);
+  }
+
+  document.getElementById("btnReloadProjetos").addEventListener("click", loadProjetos);
+
+  document.getElementById("btnCriarProjeto").addEventListener("click", async () => {
+    const nome = document.getElementById("novoProjetoNome").value.trim();
+    const msg = document.getElementById("projetoMsg");
+    msg.textContent = "Enviando...";
+
+    const r = await postJSON("/api/projetos", { nome });
+    if (r.status === 429){
+      msg.textContent = "Quota mensal de API atingida.";
+      return;
+    }
+    if (!r.ok || !r.data.success){
+      msg.textContent = (r.data && r.data.message) ? r.data.message : ("Erro ("+r.status+")");
+      return;
+    }
+    msg.textContent = "Projeto criado!";
+    document.getElementById("novoProjetoNome").value = "";
+    await loadProjetos();
+    await loadQuota();
+  });
+
+  (async () => {
+    await loadUserInfo();
+    await loadQuota();
+    await loadProjetos();
+  })();
+</script>
+{% endblock %}

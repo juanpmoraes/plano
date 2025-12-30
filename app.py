@@ -31,6 +31,7 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN", "APP_USR-5510
 MERCADO_PAGO_PUBLIC_KEY = os.getenv("MERCADO_PAGO_PUBLIC_KEY", "APP_USR-cd6283c6-f89b-4f57-94d3-a9d68b174a8a")
 
 # Planos disponíveis
+# Planos disponíveis
 PLANOS = {
     'free': {
         'nome': 'Gratuito',
@@ -226,7 +227,7 @@ def init_database():
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
-    # Uso mensal API (pronto para usar depois)
+    # Uso mensal API
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS api_uso_mensal (
             usuario_id INT NOT NULL,
@@ -298,9 +299,22 @@ def can_create_project(usuario_id):
     return True, None
 
 
+# -------------------------
+# API Access + Quota mensal
+# -------------------------
 def get_ano_mes(dt=None):
     dt = dt or datetime.utcnow()
     return dt.strftime("%Y-%m")  # ex: '2025-12'
+
+
+def seconds_until_next_month_utc(now=None):
+    now = now or datetime.utcnow()
+    year, month = now.year, now.month
+    if month == 12:
+        next_month = datetime(year + 1, 1, 1)
+    else:
+        next_month = datetime(year, month + 1, 1)
+    return int((next_month - now).total_seconds())
 
 
 def get_api_quota_limit(plano: str):
@@ -341,11 +355,10 @@ def try_consume_api_call(usuario_id: int):
         return False, {"plano": plano, "limit": limit, "used": None, "ano_mes": ano_mes, "error": "db"}
 
     cur = conn.cursor()
-
     try:
         conn.start_transaction()
 
-        # trava a linha do mês (se existir) para evitar corrida [web:396]
+        # trava a linha do mês (se existir) para evitar corrida
         cur.execute(
             "SELECT total FROM api_uso_mensal WHERE usuario_id=%s AND ano_mes=%s FOR UPDATE",
             (usuario_id, ano_mes)
@@ -353,7 +366,6 @@ def try_consume_api_call(usuario_id: int):
         row = cur.fetchone()
 
         if not row:
-            # primeira chamada do mês
             used_after = 1
             if limit is not None and used_after > limit:
                 conn.rollback()
@@ -368,7 +380,6 @@ def try_consume_api_call(usuario_id: int):
 
         used = int(row[0])
 
-        # limite atingido
         if limit is not None and used >= limit:
             conn.rollback()
             return False, {"plano": plano, "limit": limit, "used": used, "ano_mes": ano_mes}
@@ -384,41 +395,60 @@ def try_consume_api_call(usuario_id: int):
     except Exception as e:
         conn.rollback()
         return False, {"plano": plano, "limit": limit, "used": None, "ano_mes": ano_mes, "error": str(e)}
-
     finally:
         cur.close()
         conn.close()
 
 
+def api_access_required(count_call=True):
+    """
+    Decorator para:
+    - Exigir login via session
+    - (Opcional) consumir quota mensal de API
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if 'user_id' not in session:
+                return jsonify({'success': False, 'message': 'Usuário não autenticado'}), 401
+
+            if count_call:
+                allowed, info = try_consume_api_call(session['user_id'])
+                if not allowed:
+                    resp = jsonify({
+                        "success": False,
+                        "message": "Quota mensal de API atingida.",
+                        "quota": info
+                    })
+                    resp.status_code = 429
+                    # Em 429, é útil informar quando tentar novamente (aqui: até virar o mês)
+                    resp.headers["Retry-After"] = str(seconds_until_next_month_utc())
+                    return resp
+
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+# -------------------------
+# Endpoints API (exemplos)
+# -------------------------
 @app.route("/api/ping", methods=["GET"])
+@api_access_required(count_call=True)
 def api_ping():
-    if "user_id" not in session:
-        return jsonify({"success": False, "message": "Usuário não autenticado"}), 401
-
-    allowed, info = try_consume_api_call(session["user_id"])
-    if not allowed:
-        # 429 é o status mais usado para limite/quotas estouradas [web:398]
-        return jsonify({
-            "success": False,
-            "message": "Quota mensal de API atingida.",
-            "quota": info
-        }), 429
-
     return jsonify({
         "success": True,
-        "message": "pong",
-        "quota": info
+        "message": "pong"
     })
 
 
 @app.route("/api/quota", methods=["GET"])
+@api_access_required(count_call=False)
 def api_quota():
-    if "user_id" not in session:
-        return jsonify({"success": False}), 401
-
-    plano = get_user_plano(session["user_id"])
+    usuario_id = session["user_id"]
+    plano = get_user_plano(usuario_id)
     ano_mes = get_ano_mes()
-    used = get_api_usage(session["user_id"], ano_mes)
+    used = get_api_usage(usuario_id, ano_mes)
     limit = get_api_quota_limit(plano)
 
     return jsonify({
@@ -428,12 +458,6 @@ def api_quota():
         "used": used,
         "limit": limit
     })
-
-
-
-
-
-
 
 
 # -------------------------
@@ -814,11 +838,9 @@ def webhook():
 # API do usuário
 # -------------------------
 @app.route('/api/user_info')
+@api_access_required(count_call=False)
 def user_info():
-    if 'user_id' not in session:
-        return jsonify({'success': False})
-
-    # sempre tenta refletir o plano real do banco
+    # Mantém comportamento anterior (sem 401), mas agora padroniza com decorator
     plano_atual = get_user_plano(session['user_id'])
     session['user_plano'] = plano_atual
 
@@ -834,7 +856,7 @@ def user_info():
 # API de Projetos (limite por plano)
 # -------------------------
 @app.route('/api/projetos', methods=['GET'])
-@login_required_json
+@api_access_required(count_call=False)   # antes: True
 def listar_projetos():
     conn = get_db_connection('sistema_assinaturas')
     if not conn:
@@ -862,7 +884,7 @@ def listar_projetos():
 
 
 @app.route('/api/projetos', methods=['POST'])
-@login_required_json
+@api_access_required(count_call=False)
 def criar_projeto():
     data = request.get_json() or {}
     nome = (data.get('nome') or '').strip()

@@ -1,105 +1,220 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Planos - JPBOT</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-  <nav class="navbar">
-    <div class="nav-content">
-      <h1>🚀 JPBOT</h1>
-      <div class="nav-right">
-        <a href="/dashboard" class="btn-secondary">Dashboard</a>
-        <a href="/logout" class="btn-secondary">Sair</a>
-      </div>
+{% extends "base.html" %}
+{% block title %}Planos | JPBOT{% endblock %}
+
+{% block content %}
+  <div class="grid">
+    <div class="card" style="grid-column: span 12;">
+      <div class="h1">Planos</div>
+      <div class="muted">Selecione um plano para ativar recursos e quota de API.</div>
     </div>
-  </nav>
 
-  <div class="planos-container">
-    <h2>Escolha seu Plano</h2>
-
-    <div class="planos-grid">
-      {% for key, plano in planos.items() %}
-      <div class="plano-card {% if key == 'pro' %}featured{% endif %}">
-        <h3>{{ plano.nome }}</h3>
-
-        <div class="preco">
-          {% if plano.preco == 0 %}
-          <span class="valor">GRÁTIS</span>
+    {% set plano_atual = session.get('user_plano', 'free') %}
+    {% for key, p in planos.items() %}
+      <div class="card" style="grid-column: span 4;">
+        <div class="row" style="justify-content:space-between; align-items:flex-start;">
+          <div>
+            <div class="h2">{{ p.nome }}</div>
+            <div class="muted small">ID: <span class="mono">{{ key }}</span></div>
+          </div>
+          {% if key == plano_atual %}
+            <span class="tag ok small">Atual</span>
           {% else %}
-          <span class="cifrao">R$</span>
-          <span class="valor">{{ "%.2f"|format(plano.preco) }}</span>
-          <span class="periodo">/mês</span>
+            <span class="tag small">Disponível</span>
           {% endif %}
         </div>
 
-        <ul class="recursos">
-          {% for recurso in plano.recursos %}
-          <li>✓ {{ recurso }}</li>
+        <div class="hr"></div>
+
+        <div style="font-size:26px; font-weight:700;">
+          R$ {{ "%.2f"|format(p.preco) }}
+          <span class="muted small">/mês</span>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="muted small">Recursos</div>
+        <ul class="list">
+          {% for r in p.recursos %}
+            <li>{{ r }}</li>
           {% endfor %}
         </ul>
 
-        <button class="btn-plano" onclick="selecionarPlano('{{ key }}')">
-          {% if key == 'free' %}Começar Grátis{% else %}Assinar{% endif %}
+        <div class="hr"></div>
+
+        <div class="muted small">Limites</div>
+        <ul class="list">
+          <li>Projetos: <span class="mono">{{ p.limites.projetos if p.limites.projetos is not none else "ilimitado" }}</span></li>
+          <li>API calls/mês: <span class="mono">{{ p.limites.api_calls_mes }}</span></li>
+        </ul>
+
+        <div class="hr"></div>
+
+        <button
+          class="btn {% if key != plano_atual %}btn-primary{% endif %}"
+          {% if key == plano_atual %}disabled{% endif %}
+          onclick="selecionarPlano('{{ key }}')">
+          {% if key == plano_atual %}Plano atual{% else %}Selecionar{% endif %}
         </button>
       </div>
-      {% endfor %}
-    </div>
-  </div>
+    {% endfor %}
 
-  <!-- Modal CPF -->
-  <div id="cpf-modal" class="modal">
-    <div class="modal-content">
-      <span class="close" onclick="fecharCpfModal()">&times;</span>
-      <h3>Informe seu CPF</h3>
-
-      <div class="form-group">
-        <label>CPF</label>
-        <input id="cpf-input" type="text" placeholder="123.456.789-09" maxlength="14" />
-        <div id="cpf-error" class="message error" style="display:none;"></div>
+    <div class="card hidden" id="payCard" style="grid-column: span 12;">
+      <div class="row" style="justify-content:space-between;">
+        <div>
+          <div class="h2">Pagamento PIX</div>
+          <div class="muted small">Se for plano pago, gere o PIX e aguarde a confirmação.</div>
+        </div>
+        <button class="btn btn-danger" onclick="fecharPagamento()">Fechar</button>
       </div>
 
-      <button class="btn-primary" onclick="confirmarCompra()">Gerar PIX</button>
+      <div class="hr"></div>
+
+      <div id="payMsg" class="muted">—</div>
+
+      <div class="grid" style="margin-top:12px;">
+        <div style="grid-column: span 5;">
+          <div class="muted small">QR Code</div>
+          <div class="card" style="text-align:center;">
+            <img id="qrImg" alt="QR Code PIX" style="max-width:260px; width:100%; height:auto; display:none;" />
+            <div id="qrFallback" class="muted small">Aguardando geração...</div>
+          </div>
+        </div>
+        <div style="grid-column: span 7;">
+          <div class="muted small">Copia e cola</div>
+          <textarea id="qrString" class="input mono" rows="6" readonly placeholder="copia e cola aparecerá aqui..."></textarea>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn" onclick="copiarQrString()">Copiar</button>
+            <button class="btn" id="btnVerificar" onclick="verificarAgora()" disabled>Verificar agora</button>
+            <span class="muted small" id="verifMsg"></span>
+          </div>
+          <div class="hr"></div>
+          <div class="muted small">
+            Quando confirmar, você será redirecionado para o dashboard.
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+{% endblock %}
 
-  <!-- Modal PIX -->
-  <div id="pix-modal" class="modal">
-    <div class="modal-content">
-      <span class="close" onclick="fecharPixModal()">&times;</span>
-      <h3>Pagamento via PIX</h3>
-      <p>Escaneie o QR Code abaixo:</p>
+{% block scripts %}
+<script>
+  let currentPixId = null;
+  let currentPlano = null;
+  let pollTimer = null;
 
-      <div class="qr-container">
-        <img id="pix-qr-img" alt="QR Code PIX" />
-      </div>
+  async function postJSON(url, body){
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
 
-      <p class="info-text">Ou copie o código PIX (copia e cola):</p>
-      <div class="pix-code">
-        <input id="pix-copy" type="text" readonly />
-        <button onclick="copiarPix()">Copiar</button>
-      </div>
-    </div>
-  </div>
+  async function getJSON(url){
+    const res = await fetch(url, { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
 
-  <script src="{{ url_for('static', filename='js/planos.js') }}"></script>
+  function abrirPagamento(){
+    document.getElementById("payCard").classList.remove("hidden");
+    document.getElementById("payMsg").textContent = "Gerando pagamento...";
+    document.getElementById("verifMsg").textContent = "";
+    document.getElementById("btnVerificar").disabled = true;
+    document.getElementById("qrImg").style.display = "none";
+    document.getElementById("qrFallback").textContent = "Aguardando geração...";
+    document.getElementById("qrString").value = "";
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  }
 
-  <!-- Modal Sucesso -->
-<div id="success-modal" class="modal">
-  <div class="modal-content">
-    <h3>Pagamento confirmado</h3>
+  function fecharPagamento(){
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+    currentPixId = null;
+    currentPlano = null;
+    document.getElementById("payCard").classList.add("hidden");
+  }
 
-    <svg class="checkmark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 52 52">
-      <circle class="checkmark__circle" cx="26" cy="26" r="25" fill="none"/>
-      <path class="checkmark__check" fill="none" d="M14.1 27.2l7.1 7.2 16.7-16.8"/>
-    </svg>
+  function copiarQrString(){
+    const el = document.getElementById("qrString");
+    if (!el.value) return;
+    el.select();
+    document.execCommand("copy");
+    document.getElementById("verifMsg").textContent = "Copiado.";
+    setTimeout(() => (document.getElementById("verifMsg").textContent = ""), 1200);
+  }
 
-    <p id="success-plan-text"></p>
-    <button class="btn-primary" onclick="window.location.href='/dashboard'">Ir para o dashboard</button>
-  </div>
-</div>
+  async function selecionarPlano(plano){
+    currentPlano = plano;
 
-</body>
-</html>
+    // Free: troca imediata (backend atualiza plano e retorna success)
+    if (plano === "free"){
+      const r = await postJSON("/criar_pagamento", { plano: "free" });
+      if (r.data && r.data.success){
+        window.location.href = "/dashboard";
+        return;
+      }
+      alert((r.data && r.data.message) ? r.data.message : "Erro ao trocar para free");
+      return;
+    }
+
+    const cpf = window.prompt("Digite seu CPF (somente números ou com pontuação):");
+    if (!cpf) return;
+
+    abrirPagamento();
+    const r = await postJSON("/criar_pagamento", { plano, cpf });
+
+    if (!r.ok || !r.data.success){
+      document.getElementById("payMsg").textContent = (r.data && r.data.message) ? r.data.message : "Erro ao gerar PIX.";
+      return;
+    }
+
+    currentPixId = r.data.pix_id;
+    document.getElementById("payMsg").textContent =
+      "PIX gerado. Plano: " + plano + " | Valor: R$ " + (r.data.valor ?? "—") + " | pix_id=" + currentPixId;
+
+    if (r.data.qr_code){
+      const img = document.getElementById("qrImg");
+      img.src = "data:image/png;base64," + r.data.qr_code;
+      img.style.display = "block";
+      document.getElementById("qrFallback").textContent = "";
+    } else {
+      document.getElementById("qrFallback").textContent = "QR code indisponível, use o copia e cola.";
+    }
+
+    if (r.data.qr_string){
+      document.getElementById("qrString").value = r.data.qr_string;
+    }
+
+    document.getElementById("btnVerificar").disabled = false;
+
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(verificarAgora, 5000);
+  }
+
+  async function verificarAgora(){
+    if (!currentPixId) return;
+    const msg = document.getElementById("verifMsg");
+    msg.textContent = "Verificando...";
+
+    const r = await getJSON("/verificar_pagamento/" + encodeURIComponent(currentPixId));
+    if (!r.ok){
+      msg.textContent = "Erro ao verificar (" + r.status + ")";
+      return;
+    }
+
+    if (r.data && r.data.success && r.data.status === "confirmado"){
+      msg.textContent = "Confirmado! Redirecionando...";
+      if (pollTimer) clearInterval(pollTimer);
+      setTimeout(() => window.location.href = "/dashboard", 800);
+      return;
+    }
+
+    msg.textContent = "Ainda pendente...";
+  }
+</script>
+{% endblock %}

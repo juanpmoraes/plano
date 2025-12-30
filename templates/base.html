@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}JPBOT{% endblock %}</title>
+  <style>
+    :root{
+      --bg:#0b1220; --card:#111a2e; --muted:#94a3b8; --text:#e5e7eb;
+      --pri:#60a5fa; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+      --border: rgba(148,163,184,.18);
+    }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;
+          background:linear-gradient(180deg,#060b16 0%, #0b1220 60%, #070c15 100%);
+          color:var(--text); }
+    a{ color:var(--pri); text-decoration:none; }
+    .container{ max-width:1100px; margin:0 auto; padding:16px; }
+    .nav{
+      position:sticky; top:0; z-index:5;
+      background:rgba(6,11,22,.75); backdrop-filter: blur(10px);
+      border-bottom:1px solid var(--border);
+    }
+    .nav-inner{ display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px 16px; }
+    .brand{ font-weight:700; letter-spacing:.4px; }
+    .nav-links{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      border:1px solid var(--border); background:rgba(17,26,46,.55);
+      padding:8px 10px; border-radius:999px; color:var(--text);
+    }
+    .btn{
+      cursor:pointer; border:1px solid var(--border);
+      padding:10px 12px; border-radius:10px;
+      background:rgba(17,26,46,.9); color:var(--text);
+    }
+    .btn:hover{ border-color: rgba(96,165,250,.65); }
+    .btn-primary{ background: rgba(96,165,250,.18); border-color: rgba(96,165,250,.55); }
+    .btn-danger{ background: rgba(239,68,68,.12); border-color: rgba(239,68,68,.45); }
+    .grid{ display:grid; grid-template-columns:repeat(12,1fr); gap:12px; }
+    .card{
+      background:rgba(17,26,46,.72); border:1px solid var(--border);
+      border-radius:14px; padding:14px;
+    }
+    .muted{ color:var(--muted); }
+    .h1{ font-size:22px; margin:0 0 4px; }
+    .h2{ font-size:16px; margin:0 0 8px; }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .input{
+      width:100%; padding:10px 12px; border-radius:10px;
+      border:1px solid var(--border); background:rgba(11,18,32,.7);
+      color:var(--text);
+    }
+    .input:focus{ outline:none; border-color: rgba(96,165,250,.65); }
+    .tag{ display:inline-flex; padding:4px 8px; border-radius:999px; border:1px solid var(--border); }
+    .tag.ok{ border-color: rgba(34,197,94,.5); background: rgba(34,197,94,.12); }
+    .tag.bad{ border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.12); }
+    .tag.warn{ border-color: rgba(245,158,11,.55); background: rgba(245,158,11,.12); }
+    .hr{ height:1px; background:var(--border); margin:12px 0; }
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
+    .small{ font-size:12px; }
+    .list{ margin:8px 0 0; padding-left:18px; }
+    .list li{ margin:6px 0; }
+    .right{ text-align:right; }
+    .hidden{ display:none !important; }
+
+    @media (max-width: 860px){
+      .grid{ grid-template-columns:repeat(6,1fr); }
+    }
+    @media (max-width: 520px){
+      .grid{ grid-template-columns:repeat(1,1fr); }
+      .nav-inner{ flex-direction:column; align-items:flex-start; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="nav">
+    <div class="nav-inner">
+      <div class="row" style="gap:12px;">
+        <div class="brand">JPBOT</div>
+        {% if session.get('user_id') %}
+          <span class="pill small">Logado: <b>{{ session.get('user_name','') }}</b></span>
+          <span class="pill small">Plano: <b>{{ session.get('user_plano','free') }}</b></span>
+        {% else %}
+          <span class="pill small muted">Não autenticado</span>
+        {% endif %}
+      </div>
+
+      <div class="nav-links">
+        {% if session.get('user_id') %}
+          <a class="pill" href="/dashboard">Dashboard</a>
+          <a class="pill" href="/planos">Planos</a>
+          <a class="pill" href="/logout">Sair</a>
+        {% else %}
+          <a class="pill" href="/">Login</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

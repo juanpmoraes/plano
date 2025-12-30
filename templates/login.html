@@ -1,59 +1,88 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Sistema de Assinaturas</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-</head>
-<body>
-    <div class="container">
-        <div class="auth-box">
-            <div class="logo">
-                <h1>🚀 JPBOT</h1>
-            </div>
-            
-            <div class="tabs">
-                <button class="tab-btn active" onclick="showTab('login')">Login</button>
-                <button class="tab-btn" onclick="showTab('register')">Cadastrar</button>
-            </div>
-            
-            <!-- Login Form -->
-            <form id="login-form" class="auth-form active">
-                <h2>Bem-vindo de volta!</h2>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" id="login-email" placeholder="teste@email.com" required>
-                </div>
-                <div class="form-group">
-                    <label>Senha</label>
-                    <input type="password" id="login-senha" placeholder="teste123" required>
-                </div>
-                <button type="submit" class="btn-primary">Entrar</button>
-                <div id="login-message" class="message"></div>
-            </form>
-            
-            <!-- Register Form -->
-            <form id="register-form" class="auth-form">
-                <h2>Criar nova conta</h2>
-                <div class="form-group">
-                    <label>Nome completo</label>
-                    <input type="text" id="register-nome" required>
-                </div>
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" id="register-email" required>
-                </div>
-                <div class="form-group">
-                    <label>Senha</label>
-                    <input type="password" id="register-senha" required>
-                </div>
-                <button type="submit" class="btn-primary">Cadastrar</button>
-                <div id="register-message" class="message"></div>
-            </form>
-        </div>
+{% extends "base.html" %}
+{% block title %}Login | JPBOT{% endblock %}
+
+{% block content %}
+  <div class="grid">
+    <div class="card" style="grid-column: span 12;">
+      <div class="h1">Entrar</div>
+      <div class="muted">Use o email e senha cadastrados.</div>
     </div>
-    
-    <script src="{{ url_for('static', filename='js/auth.js') }}"></script>
-</body>
-</html>
+
+    <div class="card" style="grid-column: span 6;">
+      <div class="h2">Login</div>
+      <div class="row">
+        <input id="login_email" class="input" type="email" placeholder="Email" autocomplete="email">
+        <input id="login_senha" class="input" type="password" placeholder="Senha" autocomplete="current-password">
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn btn-primary" id="btnLogin">Entrar</button>
+        <span id="loginMsg" class="muted small"></span>
+      </div>
+      <div class="hr"></div>
+      <div class="muted small">
+        Dica: usuário teste: <span class="mono">teste@email.com</span> / <span class="mono">teste123</span>
+      </div>
+    </div>
+
+    <div class="card" style="grid-column: span 6;">
+      <div class="h2">Criar conta</div>
+      <div class="row">
+        <input id="reg_nome" class="input" type="text" placeholder="Nome">
+        <input id="reg_email" class="input" type="email" placeholder="Email">
+        <input id="reg_senha" class="input" type="password" placeholder="Senha">
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="btnRegister">Cadastrar</button>
+        <span id="regMsg" class="muted small"></span>
+      </div>
+      <div class="hr"></div>
+      <div class="muted small">Ao cadastrar, o plano inicial será <span class="mono">free</span>.</div>
+    </div>
+  </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  async function postJSON(url, body){
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body || {})
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data };
+  }
+
+  document.getElementById("btnLogin").addEventListener("click", async () => {
+    const email = document.getElementById("login_email").value.trim();
+    const senha = document.getElementById("login_senha").value;
+
+    const msg = document.getElementById("loginMsg");
+    msg.textContent = "Entrando...";
+
+    const r = await postJSON("/login", { email, senha });
+    if (r.data && r.data.success) {
+      window.location.href = r.data.redirect || "/dashboard";
+      return;
+    }
+    msg.textContent = (r.data && r.data.message) ? r.data.message : ("Falha no login (" + r.status + ")");
+  });
+
+  document.getElementById("btnRegister").addEventListener("click", async () => {
+    const nome = document.getElementById("reg_nome").value.trim();
+    const email = document.getElementById("reg_email").value.trim();
+    const senha = document.getElementById("reg_senha").value;
+
+    const msg = document.getElementById("regMsg");
+    msg.textContent = "Cadastrando...";
+
+    const r = await postJSON("/register", { nome, email, senha });
+    msg.textContent = (r.data && r.data.message) ? r.data.message : (r.data && r.data.success ? "OK" : "Erro");
+    if (r.data && r.data.success) {
+      document.getElementById("login_email").value = email;
+      document.getElementById("login_senha").value = senha;
+    }
+  });
+</script>
+{% endblock %}
