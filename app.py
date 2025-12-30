@@ -467,7 +467,7 @@ def verificar_pagamento(pix_id):
             return jsonify({'success': True, 'status': 'pendente'})
 
         sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
-        mp_resp = sdk.payment().find_by_id(mp_payment_id)
+        mp_resp = sdk.payment().get(str(mp_payment_id))
         mp_payment = mp_resp.get('response', {})
         mp_status = mp_payment.get('status')
 
@@ -495,40 +495,37 @@ def verificar_pagamento(pix_id):
 
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
-    """✅ Webhook/IPN Mercado Pago - atualiza status automaticamente"""
     try:
         payload = request.get_json(silent=True) or {}
 
-        # 1) Tenta extrair do JSON padrão
-        payment_id = (payload.get('data') or {}).get('id') or payload.get('id')
+        # 1) ID vindo no JSON padrão (igual ao que você mostrou no painel do MP)
+        payment_id = (payload.get("data") or {}).get("id")
 
-        # 2) Fallback: IPN / query params (?topic=payment&id=123)
+        # 2) Fallback: query params (você tem requests como /webhook?data.id=... e /webhook?id=...&topic=payment)
         if not payment_id:
-            payment_id = request.args.get('id')
+            payment_id = request.args.get("id") or request.args.get("data.id")
 
         if not payment_id:
-            # Sempre responder 200/ok para o MP não ficar “martelando”
-            return jsonify({'status': 'ok', 'message': 'no payment id'}), 200
+            return jsonify({"status": "ok", "message": "no payment id"}), 200
 
         sdk = mercadopago.SDK(MERCADO_PAGO_ACCESS_TOKEN)
-        payment = sdk.payment().find_by_id(payment_id).get('response', {})
 
-        mp_status = payment.get('status')
+        # ✅ No SDK python, o método é .get(id), não find_by_id [web:291]
+        mp_resp = sdk.payment().get(str(payment_id))
+        mp_payment = mp_resp.get("response", {})
+
+        mp_status = mp_payment.get("status")
         print(f"🔔 Webhook recebido payment_id={payment_id} status={mp_status}")
 
-        # approved = pago/creditado [web:247]
-        if mp_status == 'approved':
-            conn = get_db_connection('sistema_assinaturas')
+        if mp_status == "approved":
+            conn = get_db_connection("sistema_assinaturas")
             if conn:
                 cursor = conn.cursor()
 
-                # Atualiza pagamento (cobre casos onde você salvou mp_payment_id = payment_id)
                 cursor.execute(
                     "UPDATE pagamentos SET status='confirmado' WHERE mp_payment_id=%s OR pix_id=%s",
                     (str(payment_id), str(payment_id))
                 )
-
-                # Atualiza plano do usuário pelo pagamento confirmado
                 cursor.execute(
                     """UPDATE usuarios u
                        JOIN pagamentos p ON u.id = p.usuario_id
@@ -540,15 +537,14 @@ def webhook():
                 conn.commit()
                 cursor.close()
                 conn.close()
+                print(f"✅ Pagamento {payment_id} confirmado no banco!")
 
-                print(f"✅ Pagamento {payment_id} confirmado e plano atualizado!")
-
-        return jsonify({'status': 'ok'}), 200
+        return jsonify({"status": "ok"}), 200
 
     except Exception as e:
         print(f"Erro webhook: {e}")
-        # Mesmo em erro, vale retornar 200 para não “loopar” e você debuga via logs
-        return jsonify({'status': 'ok'}), 200
+        return jsonify({"status": "ok"}), 200
+
 
 
 @app.route('/logout')
